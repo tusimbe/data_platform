@@ -1,6 +1,12 @@
 from src.models.base import Base
 from src.models.connector import Connector
 from src.models.sync import SyncTask, SyncLog
+from src.models.raw_data import RawData
+from src.models.unified import (
+    UnifiedCustomer, UnifiedOrder, UnifiedProduct,
+    UnifiedInventory, UnifiedProject, UnifiedContact,
+)
+from src.models.field_mapping import FieldMapping, EntitySchema
 
 
 def test_base_model_exists():
@@ -79,3 +85,80 @@ def test_create_sync_log(db_session):
     assert log.id is not None
     assert log.status == "success"
     assert log.failure_count == 2
+
+
+def test_create_raw_data(db_session):
+    """应能存储原始 JSONB 数据"""
+    c = Connector(
+        name="测试", connector_type="test", base_url="http://test",
+        auth_config={}, enabled=True,
+    )
+    db_session.add(c)
+    db_session.flush()
+
+    raw = RawData(
+        connector_id=c.id,
+        entity="sales_order",
+        external_id="SO-001",
+        data={"FBillNo": "SO-001", "FAmount": 1000.00},
+    )
+    db_session.add(raw)
+    db_session.flush()
+    assert raw.id is not None
+    assert raw.data["FBillNo"] == "SO-001"
+
+
+def test_create_unified_customer(db_session):
+    """应能创建统一客户记录"""
+    customer = UnifiedCustomer(
+        source_system="fenxiangxiaoke",
+        external_id="C-001",
+        name="测试公司",
+        company="测试有限公司",
+        phone="13800138000",
+        email="test@example.com",
+    )
+    db_session.add(customer)
+    db_session.flush()
+    assert customer.id is not None
+    assert customer.source_system == "fenxiangxiaoke"
+
+
+def test_create_unified_order(db_session):
+    """应能创建统一订单记录"""
+    order = UnifiedOrder(
+        source_system="kingdee_erp",
+        external_id="SO-001",
+        order_number="SO-001",
+        order_type="sales",
+        total_amount=1000.00,
+        currency="CNY",
+        status="approved",
+    )
+    db_session.add(order)
+    db_session.flush()
+    assert order.id is not None
+
+
+def test_create_field_mapping(db_session):
+    """应能创建字段映射记录"""
+    mapping = FieldMapping(
+        connector_type="kingdee_erp",
+        source_entity="sales_order",
+        target_table="unified_orders",
+        source_field="FBillNo",
+        target_field="order_number",
+    )
+    db_session.add(mapping)
+    db_session.flush()
+    assert mapping.id is not None
+
+
+def test_unified_tables_have_source_traceability():
+    """所有统一表应包含溯源字段"""
+    for model in [UnifiedCustomer, UnifiedOrder, UnifiedProduct,
+                  UnifiedInventory, UnifiedProject, UnifiedContact]:
+        columns = {c.name for c in model.__table__.columns}
+        assert "source_system" in columns, f"{model.__name__} missing source_system"
+        assert "external_id" in columns, f"{model.__name__} missing external_id"
+        assert "source_data_id" in columns, f"{model.__name__} missing source_data_id"
