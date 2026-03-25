@@ -1,6 +1,8 @@
 # src/services/sync_service.py
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
 
 from src.connectors.base import BaseConnector
 from src.services.field_mapping_service import FieldMappingService
@@ -54,15 +56,14 @@ class SyncExecutor:
         raw_records: list[dict],
         transformed_records: list[dict],
         target_table: str,
-        session,
+        session: Session,
         sync_log_id: int | None = None,
     ) -> int:
         """阶段3：存储原始数据到 raw_data + 更新插入统一表。返回存储成功条数"""
-        from datetime import timezone
         from src.models.raw_data import RawData
 
         stored = 0
-        for i, raw in enumerate(raw_records):
+        for raw in raw_records:
             external_id = self._extract_external_id(raw, entity)
             if not external_id:
                 continue
@@ -95,6 +96,9 @@ class SyncExecutor:
         # 更新插入统一表
         unified_model = self._get_unified_model(target_table)
         if unified_model is not None:
+            # 提前查询 connector_type，避免循环中 N+1 查询
+            connector_type = self._connector_type_for_id(connector_id, session)
+
             for record in transformed_records:
                 mapped = {k: v for k, v in record.items() if k != "_raw"}
                 raw_ref = record.get("_raw", {})
@@ -103,7 +107,7 @@ class SyncExecutor:
                     continue
 
                 existing_unified = session.query(unified_model).filter_by(
-                    source_system=self._connector_type_for_id(connector_id, session),
+                    source_system=connector_type,
                     external_id=str(ext_id),
                 ).first()
 
@@ -113,9 +117,7 @@ class SyncExecutor:
                             coerced = self._coerce_value(unified_model, k, v)
                             setattr(existing_unified, k, coerced)
                 else:
-                    mapped["source_system"] = self._connector_type_for_id(
-                        connector_id, session
-                    )
+                    mapped["source_system"] = connector_type
                     mapped["external_id"] = str(ext_id)
                     # 只传统一模型实际拥有的列
                     valid_cols = {c.name for c in unified_model.__table__.columns}
@@ -138,15 +140,39 @@ class SyncExecutor:
         entity: str,
         target_table: str,
         mappings: list[dict],
-        session,
+        session: Session,
         since: datetime | None = None,
     ) -> dict:
         """执行完整的拉取同步流程"""
-        from datetime import timezone
         from src.models.sync import SyncLog
 
         # 阶段1：拉取
-        raw_records = self.pull_phase(connector, entity, since)
+        try:
+            raw_records = self.pull_phase(connector, entity, since)
+        except Exception as e:
+            logger.error(f"拉取阶段失败: {e}")
+            log = SyncLog(
+                sync_task_id=None,
+                connector_id=connector_id,
+                entity=entity,
+                direction="pull",
+                status="failure",
+                total_records=0,
+                success_count=0,
+                failure_count=0,
+                error_details={"phase": "pull", "error": str(e)},
+                finished_at=datetime.now(timezone.utc),
+            )
+            session.add(log)
+            session.flush()
+            return {
+                "status": "failure",
+                "total_records": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "errors": [{"phase": "pull", "error": str(e)}],
+            }
+
         total = len(raw_records)
 
         if total == 0:
@@ -210,13 +236,12 @@ class SyncExecutor:
                 "errors": [{"phase": "store", "error": str(e)}],
             }
 
-        success_count = len(transformed)
         failure_count = len(errors)
         status = "success" if failure_count == 0 else "partial_success"
 
-        # 更新 sync_log
+        # 更新 sync_log — success_count 使用实际存储条数
         log.status = status
-        log.success_count = success_count
+        log.success_count = stored
         log.failure_count = failure_count
         log.error_details = {"errors": errors} if errors else None
         log.finished_at = datetime.now(timezone.utc)
@@ -225,7 +250,7 @@ class SyncExecutor:
         return {
             "status": status,
             "total_records": total,
-            "success_count": success_count,
+            "success_count": stored,
             "failure_count": failure_count,
             "errors": errors,
         }

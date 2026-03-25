@@ -100,12 +100,14 @@ def test_full_pull_sync(executor, mock_connector, mock_mappings, db_session):
         since=None,
     )
 
-    assert result["status"] in ("success", "partial_success")
+    assert result["status"] == "success"
     assert result["total_records"] == 2
-    assert result["success_count"] + result["failure_count"] == 2
+    assert result["success_count"] == 2
+    assert result["failure_count"] == 0
 
     # 验证 SyncLog 已创建
     logs = db_session.query(SyncLog).filter_by(connector_id=c.id).all()
     assert len(logs) == 1
-    assert logs[0].status in ("success", "partial_success")
+    assert logs[0].status == "success"
     assert logs[0].total_records == 2
+    assert logs[0].success_count == 2
