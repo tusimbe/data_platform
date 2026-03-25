@@ -121,3 +121,46 @@ def test_feishu_push_returns_all_failures(connector):
     for failure in result.failures:
         assert "error" in failure
         assert "飞书不支持此实体的写入" in failure["error"]
+
+
+def test_feishu_pull_pagination(connector):
+    """拉取数据应支持分页，获取所有页面的数据"""
+    # 先设置 token 避免 _ensure_token 调用 connect
+    connector._token = "test-token"
+    connector._token_expires_at = time.time() + 7200
+
+    # 模拟分页响应：第一页有 page_token，第二页没有
+    page1_response = {
+        "code": 0,
+        "data": {
+            "items": [
+                {"user_id": "ou_001", "name": "张三"},
+                {"user_id": "ou_002", "name": "李四"},
+            ],
+            "page_token": "next_page_token_123",
+        }
+    }
+    page2_response = {
+        "code": 0,
+        "data": {
+            "items": [
+                {"user_id": "ou_003", "name": "王五"},
+            ],
+            # 没有 page_token 表示最后一页
+        }
+    }
+
+    with patch.object(connector, "_request") as mock_req:
+        mock_req.side_effect = [page1_response, page2_response]
+        records = connector.pull(entity="employee")
+
+        # 应该合并两页的数据
+        assert len(records) == 3
+        assert records[0]["user_id"] == "ou_001"
+        assert records[1]["user_id"] == "ou_002"
+        assert records[2]["user_id"] == "ou_003"
+
+        # 验证第二次请求包含 page_token
+        assert mock_req.call_count == 2
+        second_call_params = mock_req.call_args_list[1][1]["params"]
+        assert second_call_params.get("page_token") == "next_page_token_123"

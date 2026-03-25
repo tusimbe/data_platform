@@ -130,16 +130,30 @@ class FeishuConnector(BaseConnector):
         entity_config = FEISHU_ENTITIES[entity]
         url = f"{self.config['base_url']}{entity_config['path']}"
 
-        params = {"page_size": DEFAULT_PAGE_SIZE}
-        if filters:
-            params.update(filters)
+        all_records = []
+        page_token = None
 
         try:
-            result = self._request("GET", url, params=params)
-            if result.get("code") != 0:
-                raise ConnectorPullError(f"飞书 API 错误: {result.get('msg')}")
-            data = result.get("data", {})
-            return data.get(entity_config["list_key"], [])
+            while True:
+                params = {"page_size": DEFAULT_PAGE_SIZE}
+                if page_token:
+                    params["page_token"] = page_token
+                if filters:
+                    params.update(filters)
+
+                result = self._request("GET", url, params=params)
+                if result.get("code") != 0:
+                    raise ConnectorPullError(f"飞书 API 错误: {result.get('msg')}")
+
+                data = result.get("data", {})
+                records = data.get(entity_config["list_key"], [])
+                all_records.extend(records)
+
+                page_token = data.get("page_token")
+                if not page_token:
+                    break
+
+            return all_records
         except ConnectorPullError:
             raise
         except Exception as e:
