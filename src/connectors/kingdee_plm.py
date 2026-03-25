@@ -27,6 +27,7 @@ KINGDEE_PLM_ENTITIES = {
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = [1, 2, 4]
+DEFAULT_PAGE_LIMIT = 2000
 
 
 @register_connector("kingdee_plm")
@@ -86,6 +87,24 @@ class KingdeePLMConnector(BaseConnector):
         since: datetime | None = None,
         filters: dict | None = None,
     ) -> list[dict]:
+        """
+        从金蝶PLM拉取指定实体的数据。
+
+        Args:
+            entity: 实体类型 (product/material/bom/change_order)
+            since: 增量同步起始时间，仅拉取该时间后修改的记录
+            filters: 额外过滤条件字典
+
+        Returns:
+            记录列表
+
+        Raises:
+            ConnectorPullError: 实体类型不支持或API调用失败
+
+        Note:
+            filter值由调用方负责预验证，本方法不做SQL注入防护。
+            此为内部连接器API，外部输入应在上层服务中校验。
+        """
         if entity not in KINGDEE_PLM_ENTITIES:
             raise ConnectorPullError(f"不支持的实体类型: {entity}")
 
@@ -109,7 +128,7 @@ class KingdeePLMConnector(BaseConnector):
             "OrderString": "",
             "TopRowCount": 0,
             "StartRow": 0,
-            "Limit": 2000,
+            "Limit": DEFAULT_PAGE_LIMIT,
         }
 
         try:
@@ -120,6 +139,19 @@ class KingdeePLMConnector(BaseConnector):
             raise ConnectorPullError(f"拉取 {entity} 失败: {e}") from e
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
+        """
+        推送记录到金蝶PLM。
+
+        Args:
+            entity: 实体类型 (product/material/bom/change_order)
+            records: 待推送的记录列表
+
+        Returns:
+            PushResult: 包含成功/失败计数和失败详情
+
+        Raises:
+            ConnectorPushError: 实体类型不支持
+        """
         if entity not in KINGDEE_PLM_ENTITIES:
             raise ConnectorPushError(f"不支持的实体类型: {entity}")
 
