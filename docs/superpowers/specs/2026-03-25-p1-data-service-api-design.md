@@ -10,6 +10,11 @@
 - 当前无 Redis/Celery（子项目6 的工作），同步任务触发采用同步执行
 - 测试使用 pytest + TestClient + SQLite 内存数据库
 
+**与行为规范（`openspec/specs/api/spec.md`）的已知偏离**：
+- **手动触发返回码**：行为规范要求 202 Accepted（异步入队），但当前无 Celery，同步执行后返回 200 + 执行结果。子项目6 接入 Celery 后改回 202。
+- **连接器健康检查结果**：行为规范要求列出连接器时包含"最近健康检查结果"，但当前无主动健康检查机制。`ConnectorResponse` 暂不包含此字段，子项目6 实现调度后可定期检查并存储结果。
+- **同步调度注册**：行为规范要求创建同步任务时"注册调度"，当前仅存储 `cron_expression`，不实际注册到调度器。子项目6 接入 Celery Beat 后实现。
+
 ---
 
 ## 架构：方案 A — 扁平路由 + 独立服务
@@ -115,9 +120,9 @@ FastAPI `Depends` 依赖函数 `get_current_api_key()`：
 - `ConnectorResponse`: `id`, `name`, `connector_type`, `base_url`, `has_auth_config` (bool), `enabled`, `description`, `created_at`, `updated_at`。**不包含 auth_config**。
 
 **`sync.py`**:
-- `SyncTaskCreate`: `connector_id`, `entity`, `direction`, `cron_expression` (optional), `enabled`
+- `SyncTaskCreate`: `connector_id`, `entity`, `direction`, `cron_expression` (optional, 默认 None), `enabled` (默认 True)。注：模型 `cron_expression` 为 `nullable=False`，需新增 Alembic migration 改为 `nullable=True` 以支持手动触发的任务。
 - `SyncTaskUpdate`: 所有字段 optional
-- `SyncTaskResponse`: 全字段 + `last_sync_at`
+- `SyncTaskResponse`: 全字段 + `last_sync_at` + `next_run_at`（从 `cron_expression` 计算，无 cron 时为 null）
 - `SyncLogResponse`: 全字段
 
 **`data.py`**:
@@ -246,9 +251,10 @@ GET /api/v1/data/customers?status=active&source_system=fenxiangxiaoke
 
 ### 凭证安全
 
-- `auth_config` 写入时使用 `security.encrypt_value()` 加密存储
+- `auth_config` 写入时使用 `security.encrypt_value()` 加密存储（`src/core/security.py` 提供 `encrypt_value()` / `decrypt_value()` 基于 Fernet 对称加密）
 - 响应中**不返回** `auth_config` 字段
 - 仅返回 `has_auth_config: true/false` 标识是否已配置凭证
+- 推送/同步等需要连接器实例时，服务层从 DB 读取加密的 `auth_config`，通过 `decrypt_value()` 解密后传入连接器 `connect()` 方法
 
 ### 软删除行为（DELETE）
 
@@ -305,14 +311,15 @@ GET /api/v1/data/customers?status=active&source_system=fenxiangxiaoke
 
 ### 手动触发（`POST /sync-tasks/{id}/trigger`）
 
-当前无 Celery，采用同步执行：
+当前无 Celery，采用同步执行（偏离行为规范的 202，见顶部说明）：
 - 直接调用 `SyncExecutor.execute_pull()` 或对应推送逻辑
 - 返回 200 + 执行结果 `{"status": "success", "total_records": N, "success_count": N, ...}`
-- 后续子项目6 接入 Celery 后改为 202 Accepted + 异步执行
+- 后续子项目6 接入 Celery 后改为 202 Accepted + task_id，异步执行
 
 ### 同步日志查询
 
 - 支持过滤：`?connector_id=1&entity=customer&status=success`
+- 支持日期范围：`?started_after=2026-01-01T00:00:00Z&started_before=2026-03-01T00:00:00Z`（ISO 8601 格式，基于 `started_at` 字段）
 - 按 `started_at` 降序排列
 - 分页返回
 
