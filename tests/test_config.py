@@ -28,3 +28,25 @@ def test_config_from_env():
         settings = config_mod.Settings()
         assert settings.APP_NAME == "测试中台"
         assert settings.DATABASE_URL == "postgresql://test:test@db/test"
+
+
+from src.core.security import encrypt_value, decrypt_value
+
+
+def test_encrypt_decrypt_roundtrip():
+    """加密后解密应还原原始值"""
+    key = "test-secret-key-for-encryption!!"  # 32 bytes
+    original = "my_secret_password_123"
+    encrypted = encrypt_value(original, key)
+    assert encrypted != original
+    decrypted = decrypt_value(encrypted, key)
+    assert decrypted == original
+
+
+def test_encrypt_produces_different_output():
+    """同一明文多次加密应产生不同密文（因 IV 不同）"""
+    key = "test-secret-key-for-encryption!!"
+    val = "same_value"
+    e1 = encrypt_value(val, key)
+    e2 = encrypt_value(val, key)
+    assert e1 != e2  # Fernet 使用随机 IV
