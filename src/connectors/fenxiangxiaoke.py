@@ -1,0 +1,284 @@
+# src/connectors/fenxiangxiaoke.py
+import time
+import logging
+from datetime import datetime
+
+import httpx
+
+from src.connectors.base import (
+    BaseConnector,
+    register_connector,
+    HealthStatus,
+    EntityInfo,
+    PushResult,
+    ConnectorPullError,
+    ConnectorPushError,
+)
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_PAGE_SIZE = 100
+
+# 纷享销客支持的实体及对应 API 路径
+FXIAOKE_ENTITIES = {
+    "customer": {
+        "path": "/cgi/crm/custom/v2/list",
+        "create_path": "/cgi/crm/custom/v2/data/create",
+        "description": "客户",
+        "list_key": "dataList",
+        "api_name": "AccountObj",
+    },
+    "contact": {
+        "path": "/cgi/crm/contact/list",
+        "create_path": "/cgi/crm/contact/create",
+        "description": "联系人",
+        "list_key": "dataList",
+        "api_name": "ContactObj",
+    },
+    "opportunity": {
+        "path": "/cgi/crm/opportunity/list",
+        "create_path": "/cgi/crm/opportunity/create",
+        "description": "商机",
+        "list_key": "dataList",
+        "api_name": "OpportunityObj",
+    },
+    "contract": {
+        "path": "/cgi/crm/contract/list",
+        "create_path": "/cgi/crm/contract/create",
+        "description": "合同",
+        "list_key": "dataList",
+        "api_name": "ContractObj",
+    },
+}
+
+MAX_RETRIES = 3
+RETRY_BACKOFF = [1, 2, 4]
+
+
+@register_connector("fenxiangxiaoke")
+class FenxiangxiaokeConnector(BaseConnector):
+    """纷享销客CRM连接器
+    
+    使用 corpAccessToken 认证，通过 /cgi/corpAccessToken/get/V2 获取。
+    支持客户、联系人、商机、合同等实体的读写操作。
+    """
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self._token: str | None = None
+        self._token_expires_at: float = 0
+        self._client = httpx.Client(timeout=30.0)
+
+    def connect(self) -> None:
+        """获取 corpAccessToken"""
+        url = f"{self.config['base_url']}/cgi/corpAccessToken/get/V2"
+        payload = {
+            "appId": self.config["app_id"],
+            "appSecret": self.config["app_secret"],
+            "permanentCode": self.config["permanent_code"],
+        }
+        result = self._request("POST", url, json=payload, skip_auth=True)
+        if result.get("errorCode") == 0:
+            self._token = result.get("corpAccessToken")
+            expire = result.get("expiresIn", 7200)
+            self._token_expires_at = time.time() + expire - 300  # 提前5分钟刷新
+        else:
+            raise ConnectorPullError(f"纷享销客认证失败: {result}")
+
+    def disconnect(self) -> None:
+        """断开连接，清除 token"""
+        self._token = None
+        self._token_expires_at = 0
+        self._client.close()
+
+    def _ensure_token(self) -> None:
+        """确保 token 有效，过期则刷新"""
+        if not self._token or time.time() >= self._token_expires_at:
+            self.connect()
+
+    def health_check(self) -> HealthStatus:
+        """健康检查"""
+        start = time.time()
+        try:
+            self._ensure_token()
+            # 调用一个轻量 API 验证连接
+            url = f"{self.config['base_url']}/cgi/user/get"
+            payload = {
+                "corpAccessToken": self._token,
+                "corpId": self.config.get("corp_id", ""),
+            }
+            self._request("POST", url, json=payload)
+            latency = (time.time() - start) * 1000
+            return HealthStatus(status="healthy", latency_ms=round(latency, 2))
+        except Exception as e:
+            latency = (time.time() - start) * 1000
+            return HealthStatus(
+                status="unhealthy", latency_ms=round(latency, 2), error=str(e)
+            )
+
+    def list_entities(self) -> list[EntityInfo]:
+        """列出支持的实体"""
+        return [
+            EntityInfo(name=name, description=meta["description"])
+            for name, meta in FXIAOKE_ENTITIES.items()
+        ]
+
+    def pull(
+        self,
+        entity: str,
+        since: datetime | None = None,
+        filters: dict | None = None,
+    ) -> list[dict]:
+        """拉取纷享销客实体数据
+        
+        Args:
+            entity: 实体类型 (customer/contact/opportunity/contract)
+            since: 增量同步起始时间
+            filters: 额外过滤参数
+            
+        Returns:
+            记录列表
+            
+        Raises:
+            ConnectorPullError: 拉取失败时抛出
+        """
+        if entity not in FXIAOKE_ENTITIES:
+            raise ConnectorPullError(f"不支持的实体类型: {entity}")
+
+        self._ensure_token()
+        entity_config = FXIAOKE_ENTITIES[entity]
+        url = f"{self.config['base_url']}{entity_config['path']}"
+
+        all_records = []
+        page_number = 1
+
+        try:
+            while True:
+                payload = {
+                    "corpAccessToken": self._token,
+                    "corpId": self.config.get("corp_id", ""),
+                    "currentOpenUserId": self.config.get("open_user_id", ""),
+                    "pageNumber": page_number,
+                    "pageSize": DEFAULT_PAGE_SIZE,
+                }
+                
+                # 添加实体 API 名称（如果需要）
+                if "api_name" in entity_config:
+                    payload["apiName"] = entity_config["api_name"]
+                
+                if filters:
+                    payload.update(filters)
+
+                result = self._request("POST", url, json=payload)
+                
+                if result.get("errorCode") != 0:
+                    error_msg = result.get("errorMessage", "未知错误")
+                    raise ConnectorPullError(f"纷享销客 API 错误: {error_msg}")
+
+                records = result.get(entity_config["list_key"], [])
+                all_records.extend(records)
+
+                # 检查是否还有更多数据
+                has_more = result.get("hasMore", False)
+                if not has_more or not records:
+                    break
+
+                page_number += 1
+
+            return all_records
+        except ConnectorPullError:
+            raise
+        except Exception as e:
+            logger.error(f"纷享销客拉取失败: entity={entity}, error={e}")
+            raise ConnectorPullError(f"拉取 {entity} 失败: {e}") from e
+
+    def push(self, entity: str, records: list[dict]) -> PushResult:
+        """推送数据到纷享销客
+        
+        纷享销客支持通过 API 创建实体数据。
+        
+        Args:
+            entity: 实体类型
+            records: 要推送的记录列表
+            
+        Returns:
+            PushResult 包含成功和失败计数
+        """
+        if entity not in FXIAOKE_ENTITIES:
+            raise ConnectorPushError(f"不支持的实体类型: {entity}")
+
+        self._ensure_token()
+        entity_config = FXIAOKE_ENTITIES[entity]
+        url = f"{self.config['base_url']}{entity_config['create_path']}"
+
+        success_count = 0
+        failure_count = 0
+        failures = []
+
+        for record in records:
+            try:
+                payload = {
+                    "corpAccessToken": self._token,
+                    "corpId": self.config.get("corp_id", ""),
+                    "currentOpenUserId": self.config.get("open_user_id", ""),
+                    "data": record,
+                }
+                
+                if "api_name" in entity_config:
+                    payload["apiName"] = entity_config["api_name"]
+
+                result = self._request("POST", url, json=payload)
+                
+                if result.get("errorCode") == 0:
+                    success_count += 1
+                else:
+                    failure_count += 1
+                    failures.append({
+                        "record": record,
+                        "error": result.get("errorMessage", "未知错误"),
+                    })
+            except Exception as e:
+                failure_count += 1
+                failures.append({
+                    "record": record,
+                    "error": str(e),
+                })
+
+        return PushResult(
+            success_count=success_count,
+            failure_count=failure_count,
+            failures=failures,
+        )
+
+    def get_schema(self, entity: str) -> dict:
+        """获取实体配置信息"""
+        return FXIAOKE_ENTITIES.get(entity, {})
+
+    def _request(
+        self, method: str, url: str, skip_auth: bool = False, **kwargs
+    ) -> dict:
+        """带重试的 HTTP 请求"""
+        headers = kwargs.pop("headers", {})
+        headers["Content-Type"] = "application/json"
+
+        last_error = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = self._client.request(method, url, headers=headers, **kwargs)
+
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", RETRY_BACKOFF[attempt]))
+                    time.sleep(retry_after)
+                    continue
+
+                resp.raise_for_status()
+                return resp.json()
+
+            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                last_error = e
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_BACKOFF[attempt])
+                    continue
+                raise
+
+        raise last_error
