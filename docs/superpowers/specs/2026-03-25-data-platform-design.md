@@ -48,7 +48,7 @@ Enterprise data platform (数据中台) for collecting, managing, and distributi
 │  Connector Registry / Schema Registry / Scheduler     │
 ├──────────────────────────────────────────────────────┤
 │  Layer 1: Connector Layer                             │
-│  KingdeeERP / KingdeePLM / FXXK / Feishu / Zentao / Lingxing │
+│  KingdeeERP / KingdeePLM / FenxiangCRM / Feishu / Zentao / Lingxing │
 ├──────────────────────────────────────────────────────┤
 │  Storage: PostgreSQL                                  │
 │  Unified models / Raw data / Metadata / Sync logs     │
