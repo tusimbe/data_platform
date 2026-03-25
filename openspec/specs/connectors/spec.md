@@ -1,153 +1,153 @@
-# Connectors Specification
+# 连接器规范
 
-## Purpose
+## 目的
 
-Define the behavior of the connector framework that integrates external business systems with the data platform. Each connector encapsulates the API interaction details of one external system and exposes a unified interface for data pull (inbound) and push (outbound).
+定义连接器框架的行为规范。连接器框架负责将外部业务系统与数据中台集成。每个连接器封装一个外部系统的 API 交互细节，并暴露统一接口用于数据拉取（入站）和推送（出站）。
 
-## Requirements
+## 需求
 
-### Requirement: Unified Connector Interface
-The system SHALL provide an abstract base class that all connectors MUST implement, ensuring a consistent interface across different external systems.
+### 需求：统一连接器接口
+系统应（SHALL）提供一个抽象基类，所有连接器必须（MUST）实现该基类，确保不同外部系统的接口一致性。
 
-#### Scenario: Connector implements required methods
-- GIVEN a new connector class for an external system
-- WHEN the connector is instantiated
-- THEN it MUST implement: connect(), disconnect(), health_check(), list_entities(), pull(), push(), get_schema()
-- AND failure to implement any required method results in a TypeError at import time
+#### 场景：连接器实现必需方法
+- 假设（GIVEN）一个新的连接器类用于某个外部系统
+- 当（WHEN）连接器被实例化时
+- 则（THEN）它必须实现：connect()、disconnect()、health_check()、list_entities()、pull()、push()、get_schema()
+- 且（AND）如果未实现任何必需方法，则在导入时抛出 TypeError
 
-### Requirement: Connector Registration
-The system SHALL maintain a registry of all available connectors, allowing dynamic lookup by connector type.
+### 需求：连接器注册
+系统应（SHALL）维护一个所有可用连接器的注册表，支持按连接器类型动态查找。
 
-#### Scenario: Register a connector
-- GIVEN a connector class decorated with @register_connector("kingdee_erp")
-- WHEN the application starts
-- THEN the connector is available in the registry under the key "kingdee_erp"
+#### 场景：注册连接器
+- 假设（GIVEN）一个使用 @register_connector("kingdee_erp") 装饰的连接器类
+- 当（WHEN）应用启动时
+- 则（THEN）该连接器以键名 "kingdee_erp" 在注册表中可用
 
-#### Scenario: Lookup a connector
-- GIVEN a connector type string "fenxiangxiaoke"
-- WHEN the registry is queried
-- THEN the corresponding connector class is returned
-- AND if the type is unknown, a ConnectorNotFoundError is raised
+#### 场景：查找连接器
+- 假设（GIVEN）一个连接器类型字符串 "fenxiangxiaoke"
+- 当（WHEN）查询注册表时
+- 则（THEN）返回对应的连接器类
+- 且（AND）如果类型未知，则抛出 ConnectorNotFoundError
 
-### Requirement: Connector Configuration
-The system SHALL store connector configurations in the database, including connection parameters and authentication credentials.
+### 需求：连接器配置
+系统应（SHALL）将连接器配置存储在数据库中，包括连接参数和认证凭据。
 
-#### Scenario: Create connector configuration
-- GIVEN valid connector parameters (type, name, auth credentials, base URL)
-- WHEN a connector configuration is saved
-- THEN it is persisted in the connectors table
-- AND authentication credentials are encrypted at rest
+#### 场景：创建连接器配置
+- 假设（GIVEN）有效的连接器参数（类型、名称、认证凭据、基础 URL）
+- 当（WHEN）保存连接器配置时
+- 则（THEN）配置持久化到 connectors 表
+- 且（AND）认证凭据静态加密存储
 
-#### Scenario: Update connector configuration
-- GIVEN an existing connector configuration
-- WHEN the auth credentials are updated
-- THEN the old credentials are replaced with new encrypted credentials
-- AND the connector can authenticate with the new credentials on next sync
+#### 场景：更新连接器配置
+- 假设（GIVEN）一个已有的连接器配置
+- 当（WHEN）更新认证凭据时
+- 则（THEN）旧凭据被新的加密凭据替换
+- 且（AND）下次同步时连接器可用新凭据进行认证
 
-### Requirement: Health Check
-The system MUST support health checking for each configured connector to verify connectivity.
+### 需求：健康检查
+系统必须（MUST）支持对每个已配置连接器的健康检查，以验证连通性。
 
-#### Scenario: Healthy connector
-- GIVEN a properly configured connector
-- WHEN health_check() is called
-- THEN it returns HealthStatus with status="healthy" and latency in milliseconds
+#### 场景：连接器健康
+- 假设（GIVEN）一个正确配置的连接器
+- 当（WHEN）调用 health_check() 时
+- 则（THEN）返回 HealthStatus，status="healthy"，并包含延迟毫秒数
 
-#### Scenario: Unhealthy connector
-- GIVEN a connector with invalid credentials
-- WHEN health_check() is called
-- THEN it returns HealthStatus with status="unhealthy" and an error message
-- AND the error is logged
+#### 场景：连接器不健康
+- 假设（GIVEN）一个认证凭据无效的连接器
+- 当（WHEN）调用 health_check() 时
+- 则（THEN）返回 HealthStatus，status="unhealthy"，并包含错误信息
+- 且（AND）错误被记录到日志
 
-### Requirement: Data Pull (Inbound)
-The system SHALL support pulling data from external systems, with both full and incremental modes.
+### 需求：数据拉取（入站）
+系统应（SHALL）支持从外部系统拉取数据，支持全量和增量两种模式。
 
-#### Scenario: Full pull
-- GIVEN a connector and an entity type (e.g., "sales_order")
-- WHEN pull(entity="sales_order", since=None) is called
-- THEN all records for that entity are returned as a list of dicts
+#### 场景：全量拉取
+- 假设（GIVEN）一个连接器和一个实体类型（如 "sales_order"）
+- 当（WHEN）调用 pull(entity="sales_order", since=None) 时
+- 则（THEN）返回该实体的所有记录，格式为字典列表
 
-#### Scenario: Incremental pull
-- GIVEN a connector, an entity type, and a last sync timestamp
-- WHEN pull(entity="sales_order", since=last_sync_time) is called
-- THEN only records created or modified after last_sync_time are returned
+#### 场景：增量拉取
+- 假设（GIVEN）一个连接器、一个实体类型和上次同步时间戳
+- 当（WHEN）调用 pull(entity="sales_order", since=last_sync_time) 时
+- 则（THEN）仅返回 last_sync_time 之后创建或修改的记录
 
-#### Scenario: Pull with filters
-- GIVEN additional filter parameters
-- WHEN pull(entity="sales_order", filters={"status": "approved"}) is called
-- THEN only records matching the filters are returned
+#### 场景：带过滤条件的拉取
+- 假设（GIVEN）附加的过滤参数
+- 当（WHEN）调用 pull(entity="sales_order", filters={"status": "approved"}) 时
+- 则（THEN）仅返回匹配过滤条件的记录
 
-#### Scenario: Pull failure
-- GIVEN a connector that encounters an API error during pull
-- WHEN the error occurs
-- THEN a ConnectorPullError is raised with the original error details
-- AND the error is logged with connector_id, entity, and timestamp
+#### 场景：拉取失败
+- 假设（GIVEN）连接器在拉取过程中遇到 API 错误
+- 当（WHEN）错误发生时
+- 则（THEN）抛出 ConnectorPullError，包含原始错误详情
+- 且（AND）错误被记录日志，包含 connector_id、entity 和时间戳
 
-### Requirement: Data Push (Outbound)
-The system SHALL support pushing data from the platform back to external systems.
+### 需求：数据推送（出站）
+系统应（SHALL）支持将数据从中台推送回外部系统。
 
-#### Scenario: Successful push
-- GIVEN a list of records to push to an external system
-- WHEN push(entity="customer", records=[...]) is called
-- THEN each record is created or updated in the external system
-- AND a PushResult is returned with success_count and failure_count
+#### 场景：推送成功
+- 假设（GIVEN）一批需要推送到外部系统的记录
+- 当（WHEN）调用 push(entity="customer", records=[...]) 时
+- 则（THEN）每条记录在外部系统中被创建或更新
+- 且（AND）返回 PushResult，包含 success_count 和 failure_count
 
-#### Scenario: Partial push failure
-- GIVEN a batch of records where some fail validation in the external system
-- WHEN push() is called
-- THEN successfully pushed records are committed
-- AND failed records are reported in PushResult.failures with error details
-- AND the sync continues (does not abort on individual record failure)
+#### 场景：部分推送失败
+- 假设（GIVEN）一批记录中部分在外部系统验证失败
+- 当（WHEN）调用 push() 时
+- 则（THEN）成功推送的记录被提交
+- 且（AND）失败的记录在 PushResult.failures 中报告，包含错误详情
+- 且（AND）同步继续执行（不因单条记录失败而中止）
 
-### Requirement: Entity Schema Discovery
-The system SHOULD support discovering the field structure of entities from external systems.
+### 需求：实体模式发现
+系统宜（SHOULD）支持从外部系统发现实体的字段结构。
 
-#### Scenario: Get entity schema
-- GIVEN a connector and an entity type
-- WHEN get_schema(entity="customer") is called
-- THEN an EntitySchema is returned containing field names, types, and required flags
+#### 场景：获取实体模式
+- 假设（GIVEN）一个连接器和一个实体类型
+- 当（WHEN）调用 get_schema(entity="customer") 时
+- 则（THEN）返回 EntitySchema，包含字段名、类型和是否必填
 
-### Requirement: Rate Limiting and Retry
-The system MUST respect external API rate limits and implement retry with backoff.
+### 需求：限流与重试
+系统必须（MUST）遵守外部 API 的速率限制，并实现带退避的重试机制。
 
-#### Scenario: Rate limit hit
-- GIVEN an external API returns a 429 (Too Many Requests) response
-- WHEN the connector encounters this response
-- THEN it waits for the duration specified in Retry-After header (or default backoff)
-- AND retries the request up to 3 times
+#### 场景：触发限流
+- 假设（GIVEN）外部 API 返回 429（请求过多）响应
+- 当（WHEN）连接器遇到该响应时
+- 则（THEN）等待 Retry-After 头指定的时间（或默认退避时间）
+- 且（AND）最多重试 3 次
 
-#### Scenario: Transient error retry
-- GIVEN a transient network error (timeout, 502, 503)
-- WHEN the connector encounters this error
-- THEN it retries with exponential backoff (1s, 2s, 4s)
-- AND after 3 failures, raises a ConnectorError
+#### 场景：瞬时错误重试
+- 假设（GIVEN）遇到瞬时网络错误（超时、502、503）
+- 当（WHEN）连接器遇到该错误时
+- 则（THEN）以指数退避重试（1秒、2秒、4秒）
+- 且（AND）3 次失败后抛出 ConnectorError
 
-## Supported Connectors
+## 各系统连接器
 
-### Requirement: Kingdee ERP Connector
-The system SHALL provide a connector for Kingdee Cloud Constellation (金蝶云星空) via its Open API.
+### 需求：金蝶ERP连接器
+系统应（SHALL）提供金蝶云星空的连接器，通过其 Open API 接入。
 
-#### Scenario: Kingdee authentication
-- GIVEN valid Kingdee API credentials (app_id, app_secret, acct_id)
-- WHEN connect() is called
-- THEN a session token is obtained and cached for subsequent requests
+#### 场景：金蝶认证
+- 假设（GIVEN）有效的金蝶 API 凭据（app_id、app_secret、acct_id）
+- 当（WHEN）调用 connect() 时
+- 则（THEN）获取会话令牌并缓存，用于后续请求
 
-#### Scenario: Pull sales orders from Kingdee
-- GIVEN a configured Kingdee ERP connector
-- WHEN pull(entity="sales_order") is called
-- THEN sales order data is retrieved via Kingdee Open API
-- AND returned in the connector's standard dict format
+#### 场景：从金蝶拉取销售订单
+- 假设（GIVEN）一个已配置的金蝶ERP连接器
+- 当（WHEN）调用 pull(entity="sales_order") 时
+- 则（THEN）通过金蝶 Open API 获取销售订单数据
+- 且（AND）以连接器标准字典格式返回
 
-### Requirement: Kingdee PLM Connector
-The system SHALL provide a connector for Kingdee PLM via its API.
+### 需求：金蝶PLM连接器
+系统应（SHALL）提供金蝶PLM的连接器，通过其 API 接入。
 
-### Requirement: Fenxiangxiaoke CRM Connector
-The system SHALL provide a connector for Fenxiangxiaoke (纷享销客) CRM via its Open Platform API.
+### 需求：纷享销客CRM连接器
+系统应（SHALL）提供纷享销客CRM的连接器，通过其开放平台 API 接入。
 
-### Requirement: Feishu Connector
-The system SHALL provide a connector for Feishu (飞书) via its Open Platform API.
+### 需求：飞书连接器
+系统应（SHALL）提供飞书的连接器，通过其开放平台 API 接入。
 
-### Requirement: Zentao Connector
-The system SHALL provide a connector for Zentao (禅道) via its REST API.
+### 需求：禅道连接器
+系统应（SHALL）提供禅道的连接器，通过其 REST API 接入。
 
-### Requirement: Lingxing ERP Connector
-The system SHALL provide a connector for Lingxing (领星ERP) via its Open Platform API.
+### 需求：领星ERP连接器
+系统应（SHALL）提供领星ERP的连接器，通过其开放平台 API 接入。

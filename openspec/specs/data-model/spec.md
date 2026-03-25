@@ -1,131 +1,131 @@
-# Data Model Specification
+# 数据模型规范
 
-## Purpose
+## 目的
 
-Define the data storage behavior of the platform, including the dual-layer storage strategy (raw + unified), metadata tables, and field mapping system.
+定义平台的数据存储行为，包括双层存储策略（原始层 + 统一层）、元数据表和字段映射系统。
 
-## Requirements
+## 需求
 
-### Requirement: Raw Data Storage
-The system SHALL store all data pulled from external systems in its original format using JSONB, enabling traceability and reprocessing.
+### 需求：原始数据存储
+系统应（SHALL）以 JSONB 原始格式存储从外部系统拉取的所有数据，支持数据追溯和重新处理。
 
-#### Scenario: Store raw data on pull
-- GIVEN data pulled from an external connector
-- WHEN the data is persisted
-- THEN each record is stored in the raw_data table with connector_id, entity, external_id, and the full original data as JSONB
-- AND the synced_at timestamp is recorded
-- AND the sync_log_id links to the sync execution
+#### 场景：拉取时存储原始数据
+- 假设（GIVEN）从外部连接器拉取了数据
+- 当（WHEN）数据被持久化时
+- 则（THEN）每条记录存储到 raw_data 表，包含 connector_id、entity、external_id 和完整的原始 JSONB 数据
+- 且（AND）记录 synced_at 同步时间戳
+- 且（AND）sync_log_id 关联到本次同步执行记录
 
-#### Scenario: Upsert raw data
-- GIVEN a record with the same (connector_id, entity, external_id) already exists
-- WHEN a new version of the record is pulled
-- THEN the existing raw_data row is updated with the new JSONB data
-- AND the synced_at timestamp is updated
+#### 场景：原始数据更新插入
+- 假设（GIVEN）已存在相同 (connector_id, entity, external_id) 的记录
+- 当（WHEN）拉取到该记录的新版本时
+- 则（THEN）更新已有 raw_data 行的 JSONB 数据
+- 且（AND）更新 synced_at 时间戳
 
-#### Scenario: Query raw data by source
-- GIVEN a connector_id and entity type
-- WHEN raw data is queried
-- THEN all matching records are returned with their original JSONB data
+#### 场景：按来源查询原始数据
+- 假设（GIVEN）指定了 connector_id 和实体类型
+- 当（WHEN）查询原始数据时
+- 则（THEN）返回所有匹配记录及其原始 JSONB 数据
 
-### Requirement: Unified Data Models
-The system SHALL maintain standardized tables for core business domains, derived from raw data via field mappings.
+### 需求：统一数据模型
+系统应（SHALL）为核心业务领域维护标准化表，通过字段映射从原始数据转换而来。
 
-#### Scenario: Unified customer record
-- GIVEN raw customer data from Fenxiangxiaoke CRM
-- WHEN field mappings are applied
-- THEN a unified_customers record is created/updated with standardized fields (name, phone, email, company, address, etc.)
-- AND source_system and external_id are preserved for traceability
+#### 场景：统一客户记录
+- 假设（GIVEN）从纷享销客CRM拉取的原始客户数据
+- 当（WHEN）应用字段映射后
+- 则（THEN）在 unified_customers 中创建/更新一条标准化记录，包含标准字段（名称、电话、邮箱、公司、地址等）
+- 且（AND）保留 source_system 和 external_id 用于数据溯源
 
-#### Scenario: Multi-source entity
-- GIVEN customer data exists in both CRM and ERP
-- WHEN both are synced
-- THEN both records exist in unified_customers with different source_system values
-- AND a matching_key (e.g., company name + phone) MAY be used to identify duplicates
+#### 场景：多来源实体
+- 假设（GIVEN）CRM 和 ERP 中都存在客户数据
+- 当（WHEN）两边都同步完成后
+- 则（THEN）unified_customers 中存在两条记录，source_system 值不同
+- 且（AND）可以（MAY）使用 matching_key（如公司名+电话）识别重复记录
 
-### Requirement: Source Traceability
-Every record in a unified table MUST link back to its source system and original data.
+### 需求：数据溯源
+统一表中的每条记录必须（MUST）能关联回其来源系统和原始数据。
 
-#### Scenario: Trace unified record to source
-- GIVEN a record in unified_orders
-- WHEN the source is queried
-- THEN the record contains source_system, external_id, and source_data_id (FK to raw_data)
-- AND the original raw data can be retrieved via source_data_id
+#### 场景：追溯统一记录到来源
+- 假设（GIVEN）unified_orders 中的一条记录
+- 当（WHEN）查询其来源时
+- 则（THEN）记录包含 source_system、external_id 和 source_data_id（关联 raw_data 的外键）
+- 且（AND）可通过 source_data_id 获取原始 raw_data
 
-### Requirement: Field Mapping Configuration
-The system SHALL support configurable field mappings between external system fields and unified model fields, without requiring code changes.
+### 需求：字段映射配置
+系统应（SHALL）支持可配置的字段映射，在外部系统字段和统一模型字段之间建立对应关系，无需修改代码。
 
-#### Scenario: Define a field mapping
-- GIVEN a connector type, entity, and unified table
-- WHEN a field mapping is created (e.g., "FBillNo" → "order_number")
-- THEN it is stored in the field_mappings table
-- AND subsequent sync operations use this mapping for data transformation
+#### 场景：定义字段映射
+- 假设（GIVEN）指定了连接器类型、实体和统一表
+- 当（WHEN）创建字段映射（如 "FBillNo" → "order_number"）时
+- 则（THEN）映射存储到 field_mappings 表
+- 且（AND）后续同步操作使用此映射进行数据转换
 
-#### Scenario: Update field mapping
-- GIVEN an existing field mapping
-- WHEN the mapping is modified
-- THEN new sync operations use the updated mapping
-- AND previously synced data is not automatically re-mapped (manual reprocess required)
+#### 场景：更新字段映射
+- 假设（GIVEN）已有的字段映射
+- 当（WHEN）修改映射后
+- 则（THEN）新的同步操作使用更新后的映射
+- 且（AND）之前已同步的数据不会自动重新映射（需手动重新处理）
 
-#### Scenario: Complex field mapping
-- GIVEN a mapping that requires transformation (e.g., date format conversion, value lookup)
-- WHEN the mapping includes a transform expression
-- THEN the transform is applied during sync
-- AND supported transforms include: date_format, value_map, concat, split
+#### 场景：复杂字段映射
+- 假设（GIVEN）映射需要转换处理（如日期格式转换、值查找）
+- 当（WHEN）映射包含转换表达式时
+- 则（THEN）在同步过程中应用转换
+- 且（AND）支持的转换包括：date_format（日期格式）、value_map（值映射）、concat（拼接）、split（分割）
 
-### Requirement: Entity Schema Registry
-The system SHOULD maintain metadata about the field structure of each entity in each external system.
+### 需求：实体模式注册
+系统宜（SHOULD）维护各外部系统中每个实体的字段结构元数据。
 
-#### Scenario: Register entity schema
-- GIVEN a connector's get_schema() returns field definitions
-- WHEN the schema is stored
-- THEN entity_schemas table contains field names, types, and required flags for that connector+entity
+#### 场景：注册实体模式
+- 假设（GIVEN）连接器的 get_schema() 返回了字段定义
+- 当（WHEN）模式被存储时
+- 则（THEN）entity_schemas 表包含该连接器+实体的字段名、类型和是否必填
 
-#### Scenario: Schema used for validation
-- GIVEN a registered schema for an entity
-- WHEN data is pulled
-- THEN pulled data MAY be validated against the schema
-- AND validation failures are logged as warnings (do not block sync)
+#### 场景：模式用于校验
+- 假设（GIVEN）已注册某实体的模式
+- 当（WHEN）拉取数据时
+- 则（THEN）拉取的数据可以（MAY）根据模式进行校验
+- 且（AND）校验失败记录为警告（不阻止同步）
 
-## Unified Table Definitions
+## 统一表定义
 
-### Requirement: Unified Customers Table
-The system SHALL maintain a unified_customers table with standardized customer fields.
+### 需求：统一客户表
+系统应（SHALL）维护 unified_customers 表，包含标准化的客户字段。
 
-#### Scenario: Customer fields
-- GIVEN the unified_customers table
-- THEN it MUST include: id, source_system, external_id, source_data_id, name, company, phone, email, address, industry, status, created_at, updated_at, synced_at
+#### 场景：客户表字段
+- 假设（GIVEN）unified_customers 表
+- 则（THEN）必须包含：id、source_system、external_id、source_data_id、name、company、phone、email、address、industry、status、created_at、updated_at、synced_at
 
-### Requirement: Unified Orders Table
-The system SHALL maintain a unified_orders table with standardized order fields.
+### 需求：统一订单表
+系统应（SHALL）维护 unified_orders 表，包含标准化的订单字段。
 
-#### Scenario: Order fields
-- GIVEN the unified_orders table
-- THEN it MUST include: id, source_system, external_id, source_data_id, order_number, order_type (sales/purchase), customer_id, total_amount, currency, status, order_date, created_at, updated_at, synced_at
+#### 场景：订单表字段
+- 假设（GIVEN）unified_orders 表
+- 则（THEN）必须包含：id、source_system、external_id、source_data_id、order_number、order_type（销售/采购）、customer_id、total_amount、currency、status、order_date、created_at、updated_at、synced_at
 
-### Requirement: Unified Products Table
-The system SHALL maintain a unified_products table with standardized product/material fields.
+### 需求：统一产品表
+系统应（SHALL）维护 unified_products 表，包含标准化的产品/物料字段。
 
-#### Scenario: Product fields
-- GIVEN the unified_products table
-- THEN it MUST include: id, source_system, external_id, source_data_id, name, sku, category, description, unit, status, created_at, updated_at, synced_at
+#### 场景：产品表字段
+- 假设（GIVEN）unified_products 表
+- 则（THEN）必须包含：id、source_system、external_id、source_data_id、name、sku、category、description、unit、status、created_at、updated_at、synced_at
 
-### Requirement: Unified Inventory Table
-The system SHALL maintain a unified_inventory table with standardized inventory fields.
+### 需求：统一库存表
+系统应（SHALL）维护 unified_inventory 表，包含标准化的库存字段。
 
-#### Scenario: Inventory fields
-- GIVEN the unified_inventory table
-- THEN it MUST include: id, source_system, external_id, source_data_id, product_id, warehouse, quantity, available_quantity, unit, updated_at, synced_at
+#### 场景：库存表字段
+- 假设（GIVEN）unified_inventory 表
+- 则（THEN）必须包含：id、source_system、external_id、source_data_id、product_id、warehouse、quantity、available_quantity、unit、updated_at、synced_at
 
-### Requirement: Unified Projects Table
-The system SHALL maintain a unified_projects table with standardized project fields.
+### 需求：统一项目表
+系统应（SHALL）维护 unified_projects 表，包含标准化的项目字段。
 
-#### Scenario: Project fields
-- GIVEN the unified_projects table
-- THEN it MUST include: id, source_system, external_id, source_data_id, name, description, status, priority, start_date, end_date, owner, created_at, updated_at, synced_at
+#### 场景：项目表字段
+- 假设（GIVEN）unified_projects 表
+- 则（THEN）必须包含：id、source_system、external_id、source_data_id、name、description、status、priority、start_date、end_date、owner、created_at、updated_at、synced_at
 
-### Requirement: Unified Contacts Table
-The system SHALL maintain a unified_contacts table with standardized contact fields.
+### 需求：统一联系人表
+系统应（SHALL）维护 unified_contacts 表，包含标准化的联系人字段。
 
-#### Scenario: Contact fields
-- GIVEN the unified_contacts table
-- THEN it MUST include: id, source_system, external_id, source_data_id, name, phone, email, company, department, position, created_at, updated_at, synced_at
+#### 场景：联系人表字段
+- 假设（GIVEN）unified_contacts 表
+- 则（THEN）必须包含：id、source_system、external_id、source_data_id、name、phone、email、company、department、position、created_at、updated_at、synced_at

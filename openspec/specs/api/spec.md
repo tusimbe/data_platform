@@ -1,145 +1,145 @@
-# API Specification
+# API 接口规范
 
-## Purpose
+## 目的
 
-Define the REST API behavior of the data platform, providing unified data query, data write-back, connector management, and sync task management endpoints.
+定义数据中台的 REST API 行为，提供统一数据查询、数据回写、连接器管理和同步任务管理等端点。
 
-## Requirements
+## 需求
 
-### Requirement: API Authentication
-The system SHALL require authentication for all API endpoints.
+### 需求：API 认证
+系统应（SHALL）对所有 API 端点要求认证。
 
-#### Scenario: Valid API key
-- GIVEN a request with a valid API key in the Authorization header
-- WHEN any API endpoint is called
-- THEN the request is processed normally
+#### 场景：有效的 API 密钥
+- 假设（GIVEN）请求在 Authorization 头中携带有效的 API 密钥
+- 当（WHEN）调用任何 API 端点时
+- 则（THEN）请求正常处理
 
-#### Scenario: Missing or invalid API key
-- GIVEN a request without an API key or with an invalid one
-- WHEN any API endpoint is called
-- THEN a 401 Unauthorized response is returned
-- AND the response body contains an error message
+#### 场景：缺少或无效的 API 密钥
+- 假设（GIVEN）请求未携带 API 密钥或密钥无效
+- 当（WHEN）调用任何 API 端点时
+- 则（THEN）返回 401 Unauthorized 响应
+- 且（AND）响应体包含错误信息
 
-### Requirement: Unified Data Query
-The system SHALL provide endpoints to query data from unified models with filtering, pagination, and sorting.
+### 需求：统一数据查询
+系统应（SHALL）提供端点用于查询统一模型数据，支持过滤、分页和排序。
 
-#### Scenario: List unified records
-- GIVEN data exists in unified_customers
-- WHEN GET /api/v1/data/customers is called
-- THEN a paginated list of customer records is returned
-- AND response includes total_count, page, page_size, and items
+#### 场景：查询统一记录列表
+- 假设（GIVEN）unified_customers 中有数据
+- 当（WHEN）调用 GET /api/v1/data/customers 时
+- 则（THEN）返回分页的客户记录列表
+- 且（AND）响应包含 total_count、page、page_size 和 items
 
-#### Scenario: Filter unified records
-- GIVEN query parameters like ?source_system=fenxiangxiaoke&status=active
-- WHEN GET /api/v1/data/customers is called with filters
-- THEN only matching records are returned
+#### 场景：过滤统一记录
+- 假设（GIVEN）查询参数如 ?source_system=fenxiangxiaoke&status=active
+- 当（WHEN）带过滤条件调用 GET /api/v1/data/customers 时
+- 则（THEN）仅返回匹配的记录
 
-#### Scenario: Get single record
-- GIVEN a record ID
-- WHEN GET /api/v1/data/customers/{id} is called
-- THEN the full record is returned including source traceability fields
+#### 场景：查询单条记录
+- 假设（GIVEN）一个记录 ID
+- 当（WHEN）调用 GET /api/v1/data/customers/{id} 时
+- 则（THEN）返回完整记录，包含数据溯源字段
 
-#### Scenario: Unknown entity type
-- GIVEN an unsupported entity type
-- WHEN GET /api/v1/data/unknown_entity is called
-- THEN a 404 Not Found response is returned
+#### 场景：未知实体类型
+- 假设（GIVEN）不支持的实体类型
+- 当（WHEN）调用 GET /api/v1/data/unknown_entity 时
+- 则（THEN）返回 404 Not Found 响应
 
-### Requirement: Raw Data Query
-The system SHALL provide endpoints to query raw (original) data by connector and entity.
+### 需求：原始数据查询
+系统应（SHALL）提供端点用于按连接器和实体查询原始数据。
 
-#### Scenario: List raw records
-- GIVEN raw data exists for kingdee_erp / sales_order
-- WHEN GET /api/v1/raw/kingdee_erp/sales_order is called
-- THEN raw JSONB records are returned with pagination
+#### 场景：查询原始记录列表
+- 假设（GIVEN）kingdee_erp / sales_order 存在原始数据
+- 当（WHEN）调用 GET /api/v1/raw/kingdee_erp/sales_order 时
+- 则（THEN）返回分页的原始 JSONB 记录
 
-### Requirement: Data Write-Back
-The system SHALL provide endpoints to push data from the platform to external systems.
+### 需求：数据回写
+系统应（SHALL）提供端点用于将数据从中台推送到外部系统。
 
-#### Scenario: Push records to external system
-- GIVEN a valid payload of records
-- WHEN POST /api/v1/push/fenxiangxiaoke/customer is called
-- THEN the connector pushes records to the external system
-- AND response contains success_count and failure_count
+#### 场景：推送记录到外部系统
+- 假设（GIVEN）有效的记录载荷
+- 当（WHEN）调用 POST /api/v1/push/fenxiangxiaoke/customer 时
+- 则（THEN）连接器将记录推送到外部系统
+- 且（AND）响应包含 success_count 和 failure_count
 
-#### Scenario: Push to unavailable system
-- GIVEN the target system is down
-- WHEN POST /api/v1/push/{connector}/{entity} is called
-- THEN a 502 Bad Gateway response is returned
-- AND error details are included in the response body
+#### 场景：推送到不可用的系统
+- 假设（GIVEN）目标系统宕机
+- 当（WHEN）调用 POST /api/v1/push/{connector}/{entity} 时
+- 则（THEN）返回 502 Bad Gateway 响应
+- 且（AND）响应体包含错误详情
 
-### Requirement: Connector Management
-The system SHALL provide CRUD endpoints for connector configurations.
+### 需求：连接器管理
+系统应（SHALL）提供连接器配置的增删改查端点。
 
-#### Scenario: List connectors
-- WHEN GET /api/v1/connectors is called
-- THEN all configured connectors are returned with their type, name, status (enabled/disabled), and last health check result
-- AND auth credentials are NOT included in the response
+#### 场景：列出连接器
+- 当（WHEN）调用 GET /api/v1/connectors 时
+- 则（THEN）返回所有已配置的连接器，包含类型、名称、状态（启用/禁用）和最近健康检查结果
+- 且（AND）响应中不包含认证凭据
 
-#### Scenario: Create connector
-- GIVEN valid connector parameters
-- WHEN POST /api/v1/connectors is called
-- THEN the connector configuration is created
-- AND a 201 Created response is returned with the new connector's ID
+#### 场景：创建连接器
+- 假设（GIVEN）有效的连接器参数
+- 当（WHEN）调用 POST /api/v1/connectors 时
+- 则（THEN）创建连接器配置
+- 且（AND）返回 201 Created 响应，包含新连接器的 ID
 
-#### Scenario: Update connector
-- GIVEN an existing connector ID and updated parameters
-- WHEN PUT /api/v1/connectors/{id} is called
-- THEN the configuration is updated
-- AND a 200 OK response is returned
+#### 场景：更新连接器
+- 假设（GIVEN）已有的连接器 ID 和更新后的参数
+- 当（WHEN）调用 PUT /api/v1/connectors/{id} 时
+- 则（THEN）配置被更新
+- 且（AND）返回 200 OK 响应
 
-#### Scenario: Delete connector
-- GIVEN an existing connector ID
-- WHEN DELETE /api/v1/connectors/{id} is called
-- THEN the connector is soft-deleted (disabled, not removed)
-- AND associated sync tasks are also disabled
+#### 场景：删除连接器
+- 假设（GIVEN）已有的连接器 ID
+- 当（WHEN）调用 DELETE /api/v1/connectors/{id} 时
+- 则（THEN）连接器被软删除（禁用，不物理删除）
+- 且（AND）关联的同步任务也被禁用
 
-### Requirement: Sync Task Management
-The system SHALL provide endpoints to manage sync tasks and view sync logs.
+### 需求：同步任务管理
+系统应（SHALL）提供端点用于管理同步任务和查看同步日志。
 
-#### Scenario: List sync tasks
-- WHEN GET /api/v1/sync-tasks is called
-- THEN all sync tasks are returned with their status, last run time, and next scheduled time
+#### 场景：列出同步任务
+- 当（WHEN）调用 GET /api/v1/sync-tasks 时
+- 则（THEN）返回所有同步任务，包含状态、上次执行时间和下次调度时间
 
-#### Scenario: Create sync task
-- GIVEN valid parameters (connector_id, entity, direction, cron)
-- WHEN POST /api/v1/sync-tasks is called
-- THEN the sync task is created and scheduled
+#### 场景：创建同步任务
+- 假设（GIVEN）有效的参数（connector_id、entity、direction、cron）
+- 当（WHEN）调用 POST /api/v1/sync-tasks 时
+- 则（THEN）创建同步任务并注册调度
 
-#### Scenario: Manually trigger sync
-- GIVEN an existing sync task ID
-- WHEN POST /api/v1/sync-tasks/{id}/trigger is called
-- THEN the sync task is immediately enqueued for execution
-- AND a 202 Accepted response is returned
+#### 场景：手动触发同步
+- 假设（GIVEN）已有的同步任务 ID
+- 当（WHEN）调用 POST /api/v1/sync-tasks/{id}/trigger 时
+- 则（THEN）同步任务立即入队执行
+- 且（AND）返回 202 Accepted 响应
 
-#### Scenario: View sync logs
-- WHEN GET /api/v1/sync-logs is called
-- THEN sync execution logs are returned with pagination
-- AND logs can be filtered by connector_id, entity, status, and date range
+#### 场景：查看同步日志
+- 当（WHEN）调用 GET /api/v1/sync-logs 时
+- 则（THEN）返回分页的同步执行日志
+- 且（AND）支持按 connector_id、entity、status 和日期范围过滤
 
-### Requirement: Health Check Endpoint
-The system SHALL provide a health check endpoint.
+### 需求：健康检查端点
+系统应（SHALL）提供健康检查端点。
 
-#### Scenario: Platform healthy
-- WHEN GET /api/v1/health is called
-- THEN response includes:
-  - database connectivity status
-  - Redis connectivity status
-  - Celery worker status
-  - Overall status (healthy/degraded/unhealthy)
+#### 场景：平台健康
+- 当（WHEN）调用 GET /api/v1/health 时
+- 则（THEN）响应包含：
+  - 数据库连通性状态
+  - Redis 连通性状态
+  - Celery Worker 状态
+  - 整体状态（healthy/degraded/unhealthy）
 
-### Requirement: Standard Error Responses
-The system SHALL return consistent error response format across all endpoints.
+### 需求：统一错误响应
+系统应（SHALL）在所有端点返回一致的错误响应格式。
 
-#### Scenario: Error response format
-- GIVEN any API error occurs
-- THEN the response body contains: {"error": {"code": "...", "message": "...", "details": ...}}
-- AND appropriate HTTP status code is used (400, 401, 404, 409, 500, 502)
+#### 场景：错误响应格式
+- 假设（GIVEN）任何 API 错误发生
+- 则（THEN）响应体包含：{"error": {"code": "...", "message": "...", "details": ...}}
+- 且（AND）使用恰当的 HTTP 状态码（400、401、404、409、500、502）
 
-### Requirement: API Pagination
-All list endpoints SHALL support cursor-based or offset pagination.
+### 需求：API 分页
+所有列表端点应（SHALL）支持偏移量分页。
 
-#### Scenario: Paginated response
-- GIVEN a list endpoint
-- WHEN called with ?page=2&page_size=20
-- THEN the response returns items for page 2 with 20 items per page
-- AND includes total_count for the full result set
+#### 场景：分页响应
+- 假设（GIVEN）一个列表端点
+- 当（WHEN）以 ?page=2&page_size=20 调用时
+- 则（THEN）响应返回第 2 页的数据，每页 20 条
+- 且（AND）包含完整结果集的 total_count
