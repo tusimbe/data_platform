@@ -406,7 +406,7 @@ def run_sync_task(self, task_id: int):
 
 ### 5.5 `_entity_to_table` 复用
 
-从 `sync_task_service.py` 中提取 `_entity_to_table` 到 `src/tasks/sync_tasks.py` 中复用（或提取为共享工具函数）。避免 task 反向依赖 service 层。
+将 `_entity_to_table` 从 `sync_task_service.py` **复制**到 `src/tasks/sync_tasks.py`。两处保持相同实现，但互不依赖。原因：task 层不应反向依赖 service 层，而这个映射函数足够简单（纯 dict lookup），重复优于耦合。如果未来映射逻辑变复杂，可提取到 `src/core/utils.py`。
 
 ## 6. API 层变更
 
@@ -464,6 +464,8 @@ def trigger_sync(session: Session, task_id: int) -> dict:
 def trigger_sync(task_id: int, session: Session = Depends(get_db)):
     return sync_task_service.trigger_sync(session, task_id)
 ```
+
+注意：当前路由在调用 `trigger_sync` 后有 `session.commit()`（因为原来同步执行会写 DB）。重构后 `trigger_sync` 只是入队 Celery task，不再写 DB，因此 **移除路由中的 `session.commit()` 调用**。
 
 ### 6.5 CRUD 与调度器联动
 
@@ -525,7 +527,7 @@ def _check_celery() -> dict:
 
 ## 8. `_compute_next_run` 实现
 
-用 `croniter` 替换当前的 stub：
+在 `src/services/sync_task_service.py` 中，用 `croniter` 替换当前返回 `None` 的 stub：
 
 ```python
 from croniter import croniter
