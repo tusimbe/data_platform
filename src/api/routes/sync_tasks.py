@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, get_current_api_key, PaginationParams
-from src.api.schemas.sync import SyncTaskCreate, SyncTaskUpdate
+from src.api.schemas.sync import SyncTaskCreate, SyncTaskUpdate, SyncTaskTriggerResponse
 from src.services import sync_task_service
 
 router = APIRouter(dependencies=[Depends(get_current_api_key)])
@@ -60,7 +60,7 @@ def delete_sync_task(
     return Response(status_code=204)
 
 
-@router.post("/sync-tasks/{task_id}/trigger", status_code=202)
+@router.post("/sync-tasks/{task_id}/trigger", response_model=SyncTaskTriggerResponse, status_code=202)
 def trigger_sync(
     task_id: int,
     session: Session = Depends(get_db),

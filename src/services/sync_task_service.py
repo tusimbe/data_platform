@@ -149,17 +149,3 @@ def _compute_next_run(cron_expression: str | None) -> datetime | None:
     except (ValueError, KeyError, TypeError):
         return None
 
-
-def _entity_to_table(entity: str) -> str:
-    """将实体名映射到统一表名"""
-    mapping = {
-        "customer": "unified_customers",
-        "order": "unified_orders",
-        "product": "unified_products",
-        "inventory": "unified_inventory",
-        "project": "unified_projects",
-        "contact": "unified_contacts",
-        "sales_order": "unified_orders",
-        "material": "unified_products",
-    }
-    return mapping.get(entity, f"unified_{entity}")

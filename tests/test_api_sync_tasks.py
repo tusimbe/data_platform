@@ -1,6 +1,8 @@
 # tests/test_api_sync_tasks.py
 """同步任务管理 API 测试"""
 import pytest
+from unittest.mock import MagicMock
+
 from src.models.connector import Connector
 
 
@@ -102,8 +104,6 @@ class TestDeleteSyncTask:
         assert get_resp.status_code == 404
 
 
-from unittest.mock import MagicMock
-
 
 class TestTriggerSync:
     def test_trigger_returns_202(self, client, api_headers, sample_task_data, mocker):
@@ -125,6 +125,7 @@ class TestTriggerSync:
         assert data["status"] == "accepted"
         assert data["task_id"] == tid
         assert data["celery_task_id"] == "fake-celery-task-id"
+        assert data["message"] == "Sync task has been queued"
 
     def test_trigger_disabled_task(self, client, api_headers, sample_task_data):
         """触发 disabled 任务应返回 400"""
