@@ -6,6 +6,7 @@ from src.api.routes.connectors import router as connectors_router
 from src.api.routes.health import router as health_router
 from src.api.routes.sync_tasks import router as sync_tasks_router
 from src.api.routes.sync_logs import router as sync_logs_router
+from src.api.routes.push import router as push_router
 
 app = FastAPI(title="数据中台", version="0.1.0")
 
@@ -17,6 +18,7 @@ app.include_router(health_router, prefix="/api/v1", tags=["health"])
 app.include_router(connectors_router, prefix="/api/v1", tags=["connectors"])
 app.include_router(sync_tasks_router, prefix="/api/v1", tags=["sync"])
 app.include_router(sync_logs_router, prefix="/api/v1", tags=["sync"])
+app.include_router(push_router, prefix="/api/v1", tags=["push"])
 
 
 @app.get("/")
