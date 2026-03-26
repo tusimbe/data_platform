@@ -13,7 +13,7 @@ class Connector(Base, TimestampMixin):
     __tablename__ = "connectors"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     connector_type: Mapped[str] = mapped_column(String(50), nullable=False)
     base_url: Mapped[str] = mapped_column(String(500), nullable=False)
     auth_config: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)

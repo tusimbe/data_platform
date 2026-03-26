@@ -18,14 +18,15 @@ from src.models.base import Base
 @pytest.fixture(scope="session")
 def engine():
     """使用 SQLite 内存数据库做测试"""
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     return engine
 
 
 @pytest.fixture
 def db_session(engine):
-    """每个测试用 connection-level transaction 包裹，确保测试隔离。"""
+    """每个测试用 connection-level transaction 包裹，确保测试隔离。
+    session.commit() 被重写为 flush()，防止提交破坏 savepoint 隔离。"""
     connection = engine.connect()
     transaction = connection.begin()
     session = Session(bind=connection)
@@ -37,8 +38,13 @@ def db_session(engine):
 
     session.begin_nested()
 
+    # 覆盖 commit 为 flush，防止路由中的 session.commit() 提交外层事务
+    _original_commit = session.commit
+    session.commit = lambda: session.flush()
+
     yield session
 
+    session.commit = _original_commit
     session.close()
     transaction.rollback()
     connection.close()

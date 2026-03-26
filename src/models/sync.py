@@ -16,7 +16,7 @@ class SyncTask(Base, TimestampMixin):
     connector_id: Mapped[int] = mapped_column(ForeignKey("connectors.id"), nullable=False)
     entity: Mapped[str] = mapped_column(String(100), nullable=False)
     direction: Mapped[str] = mapped_column(String(10), nullable=False)  # "pull" | "push"
-    cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
+    cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
