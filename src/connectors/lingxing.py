@@ -41,9 +41,6 @@ LINGXING_ENTITIES = {
     },
 }
 
-MAX_RETRIES = 3
-RETRY_BACKOFF = [1, 2, 4]
-
 
 @register_connector("lingxing")
 class LingxingConnector(BaseConnector):
@@ -179,45 +176,9 @@ class LingxingConnector(BaseConnector):
         """获取实体字段结构"""
         return LINGXING_ENTITIES.get(entity, {})
 
-    def _request(self, method: str, url: str, params: dict | None = None, **kwargs) -> dict:
-        """带签名的 HTTP 请求
-
-        Args:
-            method: HTTP 方法
-            url: 请求 URL
-            params: 请求参数
-            **kwargs: 其他 httpx 参数
-
-        Returns:
-            响应 JSON
-        """
-        params = params or {}
-
-        # 添加签名相关参数
+    def _prepare_request(self, method: str, url: str, headers: dict, kwargs: dict) -> None:
+        params = kwargs.get("params", {})
         params["app_id"] = self.config["app_id"]
         params["timestamp"] = str(int(time.time()))
-
-        # 生成签名
         params["sign"] = self._generate_signature(params)
-
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = self._client.request(method, url, params=params, **kwargs)
-
-                if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", RETRY_BACKOFF[attempt]))
-                    time.sleep(retry_after)
-                    continue
-
-                resp.raise_for_status()
-                return resp.json()
-
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
-                last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_BACKOFF[attempt])
-                    continue
-                raise
-
-        raise last_error
+        kwargs["params"] = params

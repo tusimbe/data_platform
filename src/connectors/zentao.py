@@ -52,9 +52,6 @@ ZENTAO_ENTITIES = {
     },
 }
 
-MAX_RETRIES = 3
-RETRY_BACKOFF = [1, 2, 4]
-
 
 @register_connector("zentao")
 class ZentaoConnector(BaseConnector):
@@ -77,7 +74,9 @@ class ZentaoConnector(BaseConnector):
             "account": self.config["username"],
             "password": self.config["password"],
         }
-        result = self._request("POST", url, json=payload, skip_auth=True)
+        resp = self._client.request("POST", url, json=payload)
+        resp.raise_for_status()
+        result = resp.json()
         if result.get("success"):
             self._token = result.get("token")
             # 禅道 token 通常24小时有效，提前1小时刷新
@@ -245,33 +244,8 @@ class ZentaoConnector(BaseConnector):
         """获取实体配置信息"""
         return ZENTAO_ENTITIES.get(entity, {})
 
-    def _request(self, method: str, url: str, skip_auth: bool = False, **kwargs) -> dict:
-        """带重试的 HTTP 请求"""
-        headers = kwargs.pop("headers", {})
+    def _prepare_request(self, method: str, url: str, headers: dict, kwargs: dict) -> None:
         headers["Content-Type"] = "application/json"
 
-        # 添加 token 认证（除非跳过）
-        if not skip_auth and self._token:
+        if self._token:
             headers["Token"] = self._token
-
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = self._client.request(method, url, headers=headers, **kwargs)
-
-                if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", RETRY_BACKOFF[attempt]))
-                    time.sleep(retry_after)
-                    continue
-
-                resp.raise_for_status()
-                return resp.json()
-
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
-                last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_BACKOFF[attempt])
-                    continue
-                raise
-
-        raise last_error

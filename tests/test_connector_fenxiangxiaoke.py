@@ -4,8 +4,12 @@ from unittest.mock import patch, MagicMock
 import time
 
 from src.connectors.base import (
-    HealthStatus, EntityInfo, PushResult,
-    ConnectorPullError, ConnectorPushError, connector_registry,
+    HealthStatus,
+    EntityInfo,
+    PushResult,
+    ConnectorPullError,
+    ConnectorPushError,
+    connector_registry,
 )
 
 
@@ -22,12 +26,14 @@ def fxiaoke_config():
 @pytest.fixture
 def connector(fxiaoke_config):
     from src.connectors.fenxiangxiaoke import FenxiangxiaokeConnector
+
     return FenxiangxiaokeConnector(config=fxiaoke_config)
 
 
 def test_fenxiangxiaoke_registered():
     """纷享销客连接器应已注册到全局注册表"""
     from src.connectors.fenxiangxiaoke import FenxiangxiaokeConnector
+
     cls = connector_registry.get("fenxiangxiaoke")
     assert cls is FenxiangxiaokeConnector
 
@@ -45,6 +51,8 @@ def test_fenxiangxiaoke_list_entities(connector):
 
 def test_fenxiangxiaoke_health_check_success(connector):
     """健康检查成功时应返回 healthy"""
+    connector._token = "test-token"
+    connector._token_expires_at = time.time() + 7200
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = {"errorCode": 0}
         result = connector.health_check()
@@ -54,6 +62,8 @@ def test_fenxiangxiaoke_health_check_success(connector):
 
 def test_fenxiangxiaoke_health_check_failure(connector):
     """健康检查失败时应返回 unhealthy"""
+    connector._token = "test-token"
+    connector._token_expires_at = time.time() + 7200
     with patch.object(connector, "_request") as mock_req:
         mock_req.side_effect = Exception("Connection refused")
         result = connector.health_check()
@@ -72,7 +82,7 @@ def test_fenxiangxiaoke_pull_success(connector):
         "dataList": [
             {"_id": "cust_001", "name": "客户A", "industry": "IT"},
             {"_id": "cust_002", "name": "客户B", "industry": "金融"},
-        ]
+        ],
     }
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = mock_response
@@ -103,12 +113,15 @@ def test_fenxiangxiaoke_pull_invalid_entity_raises_error(connector):
 
 def test_fenxiangxiaoke_connect_gets_token(connector):
     """connect() 应获取 corpAccessToken"""
-    with patch.object(connector, "_request") as mock_req:
-        mock_req.return_value = {
-            "errorCode": 0,
-            "corpAccessToken": "corp-token-test-123",
-            "expiresIn": 7200,
-        }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "errorCode": 0,
+        "corpAccessToken": "corp-token-test-123",
+        "expiresIn": 7200,
+    }
+    mock_resp.raise_for_status = MagicMock()
+    with patch.object(connector._client, "request", return_value=mock_resp):
         connector.connect()
         assert connector._token == "corp-token-test-123"
 
@@ -204,9 +217,9 @@ def test_fenxiangxiaoke_disconnect(connector):
     """disconnect() 应清除 token"""
     connector._token = "test-token"
     connector._token_expires_at = time.time() + 7200
-    
+
     connector.disconnect()
-    
+
     assert connector._token is None
     assert connector._token_expires_at == 0
 
@@ -215,7 +228,7 @@ def test_fenxiangxiaoke_get_schema(connector):
     """get_schema() 应返回实体配置信息"""
     schema = connector.get_schema("customer")
     assert "path" in schema or "description" in schema
-    
+
     # 不存在的实体应返回空字典
     empty_schema = connector.get_schema("nonexistent")
     assert empty_schema == {}

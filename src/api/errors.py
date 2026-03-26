@@ -5,9 +5,17 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from src.core.exceptions import (
+    AppError,
+    NotFoundError,
+    ConflictError,
+    ValidationError,
+    ServiceUnavailableError,
+    NotImplementedError_,
+)
+
 logger = logging.getLogger(__name__)
 
-# HTTP 状态码 → 错误码映射
 STATUS_CODE_MAP = {
     400: "BAD_REQUEST",
     401: "UNAUTHORIZED",
@@ -19,9 +27,30 @@ STATUS_CODE_MAP = {
     502: "BAD_GATEWAY",
 }
 
+DOMAIN_EXCEPTION_MAP: dict[type[AppError], tuple[int, str]] = {
+    NotFoundError: (404, "NOT_FOUND"),
+    ConflictError: (409, "CONFLICT"),
+    ValidationError: (400, "BAD_REQUEST"),
+    ServiceUnavailableError: (502, "BAD_GATEWAY"),
+    NotImplementedError_: (501, "NOT_IMPLEMENTED"),
+}
+
 
 def register_error_handlers(app: FastAPI) -> None:
-    """注册全局异常处理器"""
+
+    @app.exception_handler(AppError)
+    async def domain_exception_handler(request: Request, exc: AppError):
+        status_code, code = DOMAIN_EXCEPTION_MAP.get(type(exc), (500, "INTERNAL_ERROR"))
+        return JSONResponse(
+            status_code=status_code,
+            content={
+                "error": {
+                    "code": code,
+                    "message": exc.message,
+                    "details": exc.details,
+                }
+            },
+        )
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
@@ -38,9 +67,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_exception_handler(
-        request: Request, exc: RequestValidationError
-    ):
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
         return JSONResponse(
             status_code=422,
             content={

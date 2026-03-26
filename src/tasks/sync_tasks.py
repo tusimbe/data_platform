@@ -10,6 +10,7 @@ import redis
 from src.core.celery_app import celery_app
 from src.core.config import get_settings
 from src.core.database import get_session_local
+from src.core.entity_registry import get_entity_table
 from src.core.security import decrypt_value
 from src.connectors.base import connector_registry, ConnectorError
 from src.models.connector import Connector
@@ -19,21 +20,6 @@ from src.services.sync_service import SyncExecutor
 logger = logging.getLogger(__name__)
 settings = get_settings()
 redis_client = redis.from_url(settings.REDIS_URL)
-
-
-def _entity_to_table(entity: str) -> str:
-    """将实体名映射到统一表名"""
-    mapping = {
-        "customer": "unified_customers",
-        "order": "unified_orders",
-        "product": "unified_products",
-        "inventory": "unified_inventory",
-        "project": "unified_projects",
-        "contact": "unified_contacts",
-        "sales_order": "unified_orders",
-        "material": "unified_products",
-    }
-    return mapping.get(entity, f"unified_{entity}")
 
 
 @celery_app.task(
@@ -96,17 +82,16 @@ def run_sync_task(task_id: int):
             decrypted = decrypt_value(auth_config["_encrypted"], settings.ENCRYPTION_KEY)
             auth_config = json.loads(decrypted)
 
-        config = {
-            "base_url": connector_model.base_url,
-            "auth_config": auth_config,
-        }
+        config = {"base_url": connector_model.base_url}
+        if isinstance(auth_config, dict):
+            config.update(auth_config)
         connector = connector_class(config)
 
         # 5. 执行同步
         try:
             connector.connect()
             executor = SyncExecutor()
-            target_table = _entity_to_table(task.entity)
+            target_table = get_entity_table(task.entity)
 
             # Read field mappings from task config
             task_config = task.config or {}

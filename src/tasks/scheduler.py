@@ -1,10 +1,12 @@
 # src/tasks/scheduler.py
 """自定义 Celery Beat Scheduler — 从 SyncTask 表动态加载调度配置"""
+
 import logging
 import time
 
 from celery.beat import Scheduler, ScheduleEntry
 from celery.schedules import crontab
+from sqlalchemy.exc import DatabaseError, OperationalError
 
 from src.core.config import get_settings
 from src.core.database import get_session_local
@@ -24,6 +26,7 @@ class DatabaseScheduler(Scheduler):
     def __init__(self, *args, **kwargs):
         self._schedule = {}
         self._last_sync = 0.0
+        self._consecutive_failures = 0
         self.sync_every = settings.SCHEDULER_SYNC_INTERVAL
         super().__init__(*args, **kwargs)
 
@@ -76,11 +79,21 @@ class DatabaseScheduler(Scheduler):
                 new_schedule[entry_name] = entry
 
             self._schedule = new_schedule
+            self._consecutive_failures = 0
+            self._last_sync = time.time()
             logger.debug(f"Scheduler synced: {len(new_schedule)} active tasks")
+        except (OperationalError, DatabaseError) as e:
+            self._consecutive_failures += 1
+            logger.warning(
+                f"Failed to sync schedule from DB (failure #{self._consecutive_failures}): {e}"
+            )
+            if self._consecutive_failures >= 3:
+                self._schedule = {}
+                logger.error("Clearing stale schedule after 3 consecutive DB sync failures")
         except Exception as e:
             logger.exception(f"Failed to sync schedule from DB: {e}")
-        finally:
             self._last_sync = time.time()
+        finally:
             session.close()
 
     @property

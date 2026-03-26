@@ -1,6 +1,6 @@
 # tests/test_connector_feishu.py
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import time
 
 from src.connectors.feishu import FeishuConnector
@@ -39,6 +39,8 @@ def test_feishu_list_entities(connector):
 
 def test_feishu_health_check_success(connector):
     """健康检查成功时应返回 healthy"""
+    connector._token = "test-token"
+    connector._token_expires_at = time.time() + 7200
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = {"code": 0}
         result = connector.health_check()
@@ -55,6 +57,8 @@ def test_feishu_health_check_failure(connector):
 
 def test_feishu_pull_success(connector):
     """拉取数据成功应返回字典列表"""
+    connector._token = "test-token"
+    connector._token_expires_at = time.time() + 7200
     mock_response = {
         "code": 0,
         "data": {
@@ -84,12 +88,15 @@ def test_feishu_pull_failure(connector):
 
 def test_feishu_connect_gets_token(connector):
     """connect() 应获取 tenant_access_token"""
-    with patch.object(connector, "_request") as mock_req:
-        mock_req.return_value = {
-            "code": 0,
-            "tenant_access_token": "t-test-token-123",
-            "expire": 7200,
-        }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "code": 0,
+        "tenant_access_token": "t-test-token-123",
+        "expire": 7200,
+    }
+    mock_resp.raise_for_status = MagicMock()
+    with patch.object(connector._client, "request", return_value=mock_resp):
         connector.connect()
         assert connector._token == "t-test-token-123"
 

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from src.connectors.base import BaseConnector
+from src.core.entity_registry import get_entity_id_field, get_entity_model
 from src.services.field_mapping_service import FieldMappingService
 
 logger = logging.getLogger(__name__)
@@ -290,7 +291,11 @@ class SyncExecutor:
     @staticmethod
     def _extract_external_id(record: dict, entity: str) -> str | None:
         """尝试从原始记录中提取外部 ID"""
-        for key in ["FBillNo", "FNumber", "FID", "id", "Id", "ID"]:
+        id_field = get_entity_id_field(entity)
+        value = record.get(id_field)
+        if value is not None:
+            return str(value)
+        for key in ["id", "Id", "ID"]:
             if key in record:
                 return str(record[key])
         return None
@@ -298,24 +303,7 @@ class SyncExecutor:
     @staticmethod
     def _get_unified_model(target_table: str):
         """根据表名获取统一模型类"""
-        from src.models.unified import (
-            UnifiedCustomer,
-            UnifiedOrder,
-            UnifiedProduct,
-            UnifiedInventory,
-            UnifiedProject,
-            UnifiedContact,
-        )
-
-        table_map = {
-            "unified_customers": UnifiedCustomer,
-            "unified_orders": UnifiedOrder,
-            "unified_products": UnifiedProduct,
-            "unified_inventory": UnifiedInventory,
-            "unified_projects": UnifiedProject,
-            "unified_contacts": UnifiedContact,
-        }
-        return table_map.get(target_table)
+        return get_entity_model(target_table)
 
     @staticmethod
     def _connector_type_for_id(connector_id: int, session) -> str:

@@ -4,8 +4,12 @@ from unittest.mock import patch, MagicMock
 import time
 
 from src.connectors.base import (
-    HealthStatus, EntityInfo, PushResult,
-    ConnectorPullError, ConnectorPushError, connector_registry,
+    HealthStatus,
+    EntityInfo,
+    PushResult,
+    ConnectorPullError,
+    ConnectorPushError,
+    connector_registry,
 )
 
 
@@ -21,12 +25,14 @@ def zentao_config():
 @pytest.fixture
 def connector(zentao_config):
     from src.connectors.zentao import ZentaoConnector
+
     return ZentaoConnector(config=zentao_config)
 
 
 def test_zentao_registered():
     """禅道连接器应已注册到全局注册表"""
     from src.connectors.zentao import ZentaoConnector
+
     cls = connector_registry.get("zentao")
     assert cls is ZentaoConnector
 
@@ -44,6 +50,8 @@ def test_zentao_list_entities(connector):
 
 def test_zentao_health_check_success(connector):
     """健康检查成功时应返回 healthy"""
+    connector._token = "test-session-token"
+    connector._token_expires_at = time.time() + 7200
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = {"success": True}
         result = connector.health_check()
@@ -53,6 +61,8 @@ def test_zentao_health_check_success(connector):
 
 def test_zentao_health_check_failure(connector):
     """健康检查失败时应返回 unhealthy"""
+    connector._token = "test-session-token"
+    connector._token_expires_at = time.time() + 7200
     with patch.object(connector, "_request") as mock_req:
         mock_req.side_effect = Exception("Connection refused")
         result = connector.health_check()
@@ -103,11 +113,14 @@ def test_zentao_pull_invalid_entity_raises_error(connector):
 
 def test_zentao_connect_gets_token(connector):
     """connect() 应通过 /api.php/v1/tokens 获取 session token"""
-    with patch.object(connector, "_request") as mock_req:
-        mock_req.return_value = {
-            "success": True,
-            "token": "session-token-abc123",
-        }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "success": True,
+        "token": "session-token-abc123",
+    }
+    mock_resp.raise_for_status = MagicMock()
+    with patch.object(connector._client, "request", return_value=mock_resp):
         connector.connect()
         assert connector._token == "session-token-abc123"
 

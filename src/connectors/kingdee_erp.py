@@ -28,8 +28,6 @@ KINGDEE_ENTITIES = {
     "voucher": {"form_id": "GL_VOUCHER", "description": "财务凭证"},
 }
 
-MAX_RETRIES = 3
-RETRY_BACKOFF = [1, 2, 4]
 MAX_PAGES = 500
 _SAFE_FILTER_VALUE = re.compile(r"^[\w\s\-\.:/]+$")
 
@@ -172,12 +170,18 @@ class KingdeeERPConnector(BaseConnector):
                 success_count += 1
             except Exception as e:
                 failure_count += 1
+                logger.warning(
+                    f"Failed to push {entity} record {record.get('FBillNo', 'unknown')}: {e}"
+                )
                 failures.append(
                     {
                         "record": record.get("FBillNo", "unknown"),
                         "error": str(e),
                     }
                 )
+
+        if failure_count > 0:
+            logger.warning(f"Push {entity}: {failure_count}/{len(records)} records failed")
 
         return PushResult(
             success_count=success_count,
@@ -189,30 +193,6 @@ class KingdeeERPConnector(BaseConnector):
         """返回实体的字段结构（简化实现）"""
         return KINGDEE_ENTITIES.get(entity, {})
 
-    def _request(self, method: str, url: str, **kwargs) -> dict | list:
-        """带重试的 HTTP 请求"""
-        headers = kwargs.pop("headers", {})
+    def _prepare_request(self, method: str, url: str, headers: dict, kwargs: dict) -> None:
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = self._client.request(method, url, headers=headers, **kwargs)
-
-                if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", RETRY_BACKOFF[attempt]))
-                    time.sleep(retry_after)
-                    continue
-
-                resp.raise_for_status()
-                return resp.json()
-
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
-                last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_BACKOFF[attempt])
-                    continue
-                raise
-
-        raise last_error

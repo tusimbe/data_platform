@@ -1,12 +1,13 @@
 # src/services/sync_task_service.py
 """同步任务管理服务：CRUD + 验证 + 触发执行 + 日志查询"""
+
 from datetime import datetime, timezone
 
 from croniter import croniter
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.api.deps import PaginationParams, paginate
+from src.core.exceptions import NotFoundError, ValidationError
 from src.models.connector import Connector
 from src.models.sync import SyncTask, SyncLog
 
@@ -21,7 +22,7 @@ def get_sync_task(session: Session, task_id: int) -> SyncTask:
     """按 ID 获取同步任务"""
     task = session.query(SyncTask).filter_by(id=task_id).first()
     if not task:
-        raise HTTPException(status_code=404, detail=f"Sync task with id {task_id} not found")
+        raise NotFoundError(f"Sync task with id {task_id} not found")
     return task
 
 
@@ -30,7 +31,7 @@ def create_sync_task(session: Session, data: dict) -> SyncTask:
     # 验证 connector 存在且启用
     connector = session.query(Connector).filter_by(id=data["connector_id"]).first()
     if not connector or not connector.enabled:
-        raise HTTPException(status_code=400, detail="Connector not found or disabled")
+        raise ValidationError("Connector not found or disabled")
 
     task = SyncTask(
         connector_id=data["connector_id"],
@@ -65,13 +66,14 @@ def trigger_sync(session: Session, task_id: int) -> dict:
     """手动触发同步：验证后入队 Celery task"""
     task = get_sync_task(session, task_id)
     if not task.enabled:
-        raise HTTPException(status_code=400, detail="Sync task is disabled")
+        raise ValidationError("Sync task is disabled")
 
     connector = session.query(Connector).filter_by(id=task.connector_id).first()
     if not connector or not connector.enabled:
-        raise HTTPException(status_code=400, detail="Associated connector not found or disabled")
+        raise ValidationError("Associated connector not found or disabled")
 
     from src.tasks.sync_tasks import run_sync_task
+
     result = run_sync_task.delay(task_id)
     return {
         "status": "accepted",
@@ -148,4 +150,3 @@ def _compute_next_run(cron_expression: str | None) -> datetime | None:
         return cron.get_next(datetime)
     except (ValueError, KeyError, TypeError):
         return None
-

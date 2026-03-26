@@ -52,9 +52,6 @@ FXIAOKE_ENTITIES = {
     },
 }
 
-MAX_RETRIES = 3
-RETRY_BACKOFF = [1, 2, 4]
-
 
 @register_connector("fenxiangxiaoke")
 class FenxiangxiaokeConnector(BaseConnector):
@@ -78,7 +75,9 @@ class FenxiangxiaokeConnector(BaseConnector):
             "appSecret": self.config["app_secret"],
             "permanentCode": self.config["permanent_code"],
         }
-        result = self._request("POST", url, json=payload, skip_auth=True)
+        resp = self._client.request("POST", url, json=payload)
+        resp.raise_for_status()
+        result = resp.json()
         if result.get("errorCode") == 0:
             self._token = result.get("corpAccessToken")
             expire = result.get("expiresIn", 7200)
@@ -261,29 +260,5 @@ class FenxiangxiaokeConnector(BaseConnector):
         """获取实体配置信息"""
         return FXIAOKE_ENTITIES.get(entity, {})
 
-    def _request(self, method: str, url: str, skip_auth: bool = False, **kwargs) -> dict:
-        """带重试的 HTTP 请求"""
-        headers = kwargs.pop("headers", {})
+    def _prepare_request(self, method: str, url: str, headers: dict, kwargs: dict) -> None:
         headers["Content-Type"] = "application/json"
-
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = self._client.request(method, url, headers=headers, **kwargs)
-
-                if resp.status_code == 429:
-                    retry_after = int(resp.headers.get("Retry-After", RETRY_BACKOFF[attempt]))
-                    time.sleep(retry_after)
-                    continue
-
-                resp.raise_for_status()
-                return resp.json()
-
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
-                last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_BACKOFF[attempt])
-                    continue
-                raise
-
-        raise last_error

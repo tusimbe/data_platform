@@ -3,12 +3,12 @@
 
 import json
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.api.deps import PaginationParams, paginate
 from src.connectors.base import connector_registry
 from src.core.config import get_settings
+from src.core.exceptions import NotFoundError, ConflictError, ValidationError
 from src.core.security import encrypt_value
 from src.models.connector import Connector
 from src.models.sync import SyncTask
@@ -35,7 +35,7 @@ def get_connector(session: Session, connector_id: int) -> Connector:
     """按 ID 获取连接器，不存在则 404"""
     connector = session.query(Connector).filter_by(id=connector_id).first()
     if not connector:
-        raise HTTPException(status_code=404, detail=f"Connector with id {connector_id} not found")
+        raise NotFoundError(f"Connector with id {connector_id} not found")
     return connector
 
 
@@ -44,17 +44,14 @@ def create_connector(session: Session, data: dict) -> Connector:
     # 验证 connector_type
     valid_types = connector_registry.list_types()
     if data["connector_type"] not in valid_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid connector type: {data['connector_type']}. Valid: {valid_types}",
+        raise ValidationError(
+            f"Invalid connector type: {data['connector_type']}. Valid: {valid_types}",
         )
 
     # 检查名称唯一性
     existing = session.query(Connector).filter_by(name=data["name"]).first()
     if existing:
-        raise HTTPException(
-            status_code=409, detail=f"Connector name '{data['name']}' already exists"
-        )
+        raise ConflictError(f"Connector name '{data['name']}' already exists")
 
     # 加密 auth_config
     auth_config = _encrypt_auth_config(data.get("auth_config", {}))
@@ -79,18 +76,15 @@ def update_connector(session: Session, connector_id: int, data: dict) -> Connect
     if "connector_type" in data and data["connector_type"] is not None:
         valid_types = connector_registry.list_types()
         if data["connector_type"] not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid connector type: {data['connector_type']}. Valid: {valid_types}",
+            raise ValidationError(
+                f"Invalid connector type: {data['connector_type']}. Valid: {valid_types}",
             )
 
     # 如果更新 name，检查唯一性
     if "name" in data and data["name"] is not None and data["name"] != connector.name:
         existing = session.query(Connector).filter_by(name=data["name"]).first()
         if existing:
-            raise HTTPException(
-                status_code=409, detail=f"Connector name '{data['name']}' already exists"
-            )
+            raise ConflictError(f"Connector name '{data['name']}' already exists")
 
     for key, value in data.items():
         if value is None:
