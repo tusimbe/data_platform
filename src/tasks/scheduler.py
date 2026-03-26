@@ -39,7 +39,7 @@ class DatabaseScheduler(Scheduler):
             tasks = (
                 session.query(SyncTask)
                 .filter(
-                    SyncTask.enabled == True,
+                    SyncTask.enabled.is_(True),
                     SyncTask.cron_expression.isnot(None),
                 )
                 .all()
@@ -76,11 +76,11 @@ class DatabaseScheduler(Scheduler):
                 new_schedule[entry_name] = entry
 
             self._schedule = new_schedule
-            self._last_sync = time.time()
             logger.debug(f"Scheduler synced: {len(new_schedule)} active tasks")
         except Exception as e:
             logger.exception(f"Failed to sync schedule from DB: {e}")
         finally:
+            self._last_sync = time.time()
             session.close()
 
     @property
