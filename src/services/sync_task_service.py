@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 
+from croniter import croniter
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
@@ -183,12 +184,14 @@ def sync_log_to_response(log: SyncLog) -> dict:
 
 
 def _compute_next_run(cron_expression: str | None) -> datetime | None:
-    """从 cron 表达式计算下次运行时间。无 cron 返回 None。"""
+    """从 cron 表达式计算下次运行时间。无 cron 或非法表达式返回 None。"""
     if not cron_expression:
         return None
-    # 简单实现：不安装 croniter 依赖，返回 None
-    # 子项目6 接入 Celery Beat 后用真实调度器计算
-    return None
+    try:
+        cron = croniter(cron_expression, datetime.now(timezone.utc))
+        return cron.get_next(datetime)
+    except (ValueError, KeyError):
+        return None
 
 
 def _entity_to_table(entity: str) -> str:
