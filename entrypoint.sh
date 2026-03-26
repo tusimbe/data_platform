@@ -1,6 +1,17 @@
 #!/bin/bash
 set -e
 
+echo "Waiting for postgres..."
+until python -c "
+import sqlalchemy, os
+e = sqlalchemy.create_engine(os.environ['DATABASE_URL'])
+e.connect().close()
+" 2>/dev/null; do
+  echo "  postgres not ready, retrying in 2s..."
+  sleep 2
+done
+echo "Postgres is ready"
+
 echo "Running database migrations..."
 alembic upgrade head
 
