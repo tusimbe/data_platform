@@ -130,8 +130,8 @@ const Connectors: React.FC = () => {
       fetchData();
     } catch (err: unknown) {
       if (err && typeof err === 'object' && 'response' in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        message.error(axiosErr.response?.data?.detail ?? '操作失败');
+        const axiosErr = err as { response?: { data?: { error?: { message?: string }; detail?: string } } };
+        message.error(axiosErr.response?.data?.error?.message ?? axiosErr.response?.data?.detail ?? '操作失败');
       }
     } finally {
       setSubmitting(false);
