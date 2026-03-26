@@ -2,7 +2,9 @@
 import os
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from src.api.errors import register_error_handlers
 from src.api.routes.connectors import router as connectors_router
@@ -25,20 +27,26 @@ app.include_router(sync_logs_router, prefix="/api/v1", tags=["sync"])
 app.include_router(push_router, prefix="/api/v1", tags=["push"])
 app.include_router(data_router, prefix="/api/v1", tags=["data"])
 
-# SPA fallback — 当 frontend/dist 目录存在时，提供前端静态文件
+# SPA fallback — 当 frontend/dist 目录存在时，挂载静态文件服务
 _frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 _frontend_dir = os.path.normpath(_frontend_dir)
 
+
+class _SPAStaticFiles(StaticFiles):
+    """StaticFiles subclass that falls back to index.html for SPA routing."""
+
+    async def get_response(self, path: str, scope: Scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code == 404:
+                # SPA fallback: return index.html for any unknown path
+                return await super().get_response("index.html", scope)
+            raise
+
+
 if os.path.isdir(_frontend_dir):
-
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        """SPA fallback：静态文件直接返回，其余返回 index.html"""
-        file_path = os.path.join(_frontend_dir, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(_frontend_dir, "index.html"))
-
+    app.mount("/", _SPAStaticFiles(directory=_frontend_dir, html=True), name="spa")
 else:
 
     @app.get("/")

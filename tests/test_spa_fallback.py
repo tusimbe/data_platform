@@ -3,12 +3,26 @@ import os
 import tempfile
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.staticfiles import StaticFiles
+from starlette.types import Scope
 from fastapi.testclient import TestClient
 
 
+class _SPAStaticFiles(StaticFiles):
+    """StaticFiles subclass that falls back to index.html for SPA routing."""
+
+    async def get_response(self, path: str, scope: Scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as e:
+            if e.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 def _create_spa_app(frontend_dir: str) -> FastAPI:
-    """创建带 SPA fallback 的 FastAPI 应用（复制 main.py 逻辑）"""
+    """创建带 SPA fallback 的 FastAPI 应用（使用 _SPAStaticFiles，与 main.py 一致）"""
     app = FastAPI()
 
     # 模拟一个 API 路由
@@ -16,13 +30,8 @@ def _create_spa_app(frontend_dir: str) -> FastAPI:
     def health():
         return {"status": "healthy"}
 
-    # SPA fallback
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        file_path = os.path.join(frontend_dir, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(frontend_dir, "index.html"))
+    # SPA fallback — 使用 _SPAStaticFiles(html=True)
+    app.mount("/", _SPAStaticFiles(directory=frontend_dir, html=True), name="spa")
 
     return app
 
@@ -76,3 +85,18 @@ def test_api_routes_take_priority():
         response = client.get("/api/v1/health")
         assert response.status_code == 200
         assert response.json()["status"] == "healthy"
+
+
+def test_path_traversal_blocked():
+    """路径遍历攻击应被阻止"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        index_path = os.path.join(tmpdir, "index.html")
+        with open(index_path, "w") as f:
+            f.write("<html><body>SPA</body></html>")
+
+        app = _create_spa_app(tmpdir)
+        client = TestClient(app)
+
+        # Attempt path traversal — should NOT return /etc/passwd
+        response = client.get("/..%2F..%2F..%2Fetc%2Fpasswd")
+        assert response.status_code != 200 or "root:" not in response.text
