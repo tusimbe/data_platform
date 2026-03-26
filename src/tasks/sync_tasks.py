@@ -137,7 +137,10 @@ def run_sync_task(task_id: int):
         if sync_log:
             sync_log.status = "failed"
             sync_log.finished_at = datetime.now(timezone.utc)
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
         raise
     except Exception as e:
         logger.exception(f"Task {task_id} failed: {e}")
@@ -145,7 +148,10 @@ def run_sync_task(task_id: int):
             sync_log.status = "failed"
             sync_log.error_details = {"error": str(e)}
             sync_log.finished_at = datetime.now(timezone.utc)
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
         return {"status": "failed", "task_id": task_id, "error": str(e)}
     finally:
         session.close()
