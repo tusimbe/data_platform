@@ -15,6 +15,7 @@ router = APIRouter()
 
 def _check_redis() -> dict:
     """检查 Redis 连接状态"""
+    r = None
     try:
         settings = get_settings()
         r = redis.from_url(settings.REDIS_URL)
@@ -24,6 +25,9 @@ def _check_redis() -> dict:
         return {"status": "healthy", "latency_ms": latency_ms}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
+    finally:
+        if r is not None:
+            r.close()
 
 
 def _check_celery() -> dict:

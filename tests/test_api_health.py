@@ -1,6 +1,5 @@
 # tests/test_api_health.py
 """增强版健康检查 API 测试"""
-from unittest.mock import MagicMock
 
 
 def test_root(client):
