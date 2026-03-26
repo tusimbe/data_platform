@@ -1,7 +1,6 @@
 # tests/test_compute_next_run.py
 """_compute_next_run 纯函数测试"""
 from datetime import datetime, timezone
-from unittest.mock import patch
 
 
 def test_compute_next_run_with_valid_cron():

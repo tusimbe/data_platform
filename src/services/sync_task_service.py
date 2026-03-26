@@ -190,7 +190,7 @@ def _compute_next_run(cron_expression: str | None) -> datetime | None:
     try:
         cron = croniter(cron_expression, datetime.now(timezone.utc))
         return cron.get_next(datetime)
-    except (ValueError, KeyError):
+    except (ValueError, KeyError, TypeError):
         return None
 
 
