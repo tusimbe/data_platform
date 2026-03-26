@@ -3,10 +3,17 @@
 
 
 def test_root(client):
-    """根路径应返回应用信息"""
+    """根路径应返回应用信息（无 SPA 时）或 index.html（有 SPA 时）"""
+    import os
+    from src.main import _frontend_dir
+
     resp = client.get("/")
     assert resp.status_code == 200
-    assert resp.json()["name"] == "数据中台"
+    if os.path.isdir(_frontend_dir):
+        # SPA fallback 激活时，根路径返回 index.html
+        assert "html" in resp.text.lower()
+    else:
+        assert resp.json()["name"] == "数据中台"
 
 
 def test_health_returns_status(client, mocker):
