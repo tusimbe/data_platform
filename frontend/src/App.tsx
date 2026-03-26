@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { isAuthenticated } from './utils/auth';
 import AppLayout from './components/AppLayout';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 
 // 懒加载页面 — 后续 Task 会创建这些文件，此处先用占位
@@ -19,6 +20,7 @@ const AuthGuard: React.FC = () => {
 
 const App: React.FC = () => (
   <BrowserRouter>
+    <ErrorBoundary>
     <React.Suspense fallback={<div style={{ padding: 24 }}>加载中...</div>}>
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -33,6 +35,7 @@ const App: React.FC = () => (
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </React.Suspense>
+    </ErrorBoundary>
   </BrowserRouter>
 );
 

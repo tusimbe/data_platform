@@ -132,6 +132,8 @@ const Connectors: React.FC = () => {
       if (err && typeof err === 'object' && 'response' in err) {
         const axiosErr = err as { response?: { data?: { error?: { message?: string }; detail?: string } } };
         message.error(axiosErr.response?.data?.error?.message ?? axiosErr.response?.data?.detail ?? '操作失败');
+      } else if (err instanceof Error) {
+        message.error(err.message || '操作失败');
       }
     } finally {
       setSubmitting(false);
@@ -141,6 +143,10 @@ const Connectors: React.FC = () => {
   const handleToggleEnabled = async (record: ConnectorItem) => {
     try {
       await client.put(`/connectors/${record.id}`, {
+        name: record.name,
+        connector_type: record.connector_type,
+        base_url: record.base_url,
+        description: record.description,
         enabled: !record.enabled,
       });
       message.success(record.enabled ? '已禁用' : '已启用');

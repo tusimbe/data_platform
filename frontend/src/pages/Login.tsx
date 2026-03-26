@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Card, Input, Button, message, Typography } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { setApiKey, isAuthenticated } from '../utils/auth';
 import client from '../api/client';
 
@@ -13,8 +13,7 @@ const Login: React.FC = () => {
 
   // 已登录直接跳转
   if (isAuthenticated()) {
-    navigate('/dashboard', { replace: true });
-    return null;
+    return <Navigate to="/dashboard" replace />;
   }
 
   const handleLogin = async () => {

@@ -135,6 +135,8 @@ const SyncTasks: React.FC = () => {
       if (err && typeof err === 'object' && 'response' in err) {
         const axiosErr = err as { response?: { data?: { error?: { message?: string }; detail?: string } } };
         message.error(axiosErr.response?.data?.error?.message ?? axiosErr.response?.data?.detail ?? '操作失败');
+      } else if (err instanceof Error) {
+        message.error(err.message || '操作失败');
       }
     } finally {
       setSubmitting(false);
