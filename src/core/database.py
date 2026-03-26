@@ -19,3 +19,14 @@ def get_session() -> Session:
         yield session
     finally:
         session.close()
+
+
+def get_session_local():
+    """返回 SessionLocal 工厂，供非 FastAPI 环境使用（Celery task/scheduler）。
+    如果 DB 未初始化，自动初始化。"""
+    global _engine, _SessionLocal
+    if _SessionLocal is None:
+        from src.core.config import get_settings
+        settings = get_settings()
+        init_db(settings.DATABASE_URL, settings.DATABASE_ECHO)
+    return _SessionLocal

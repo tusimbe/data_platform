@@ -22,6 +22,20 @@ class Settings(BaseSettings):
     # 安全
     ENCRYPTION_KEY: str = ""
 
+    # Celery
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
+
+    # 调度器
+    SCHEDULER_SYNC_INTERVAL: int = 15
+
+    # 分布式锁
+    SYNC_LOCK_TIMEOUT: int = 3600
+
+    # 任务重试
+    SYNC_TASK_MAX_RETRIES: int = 3
+    SYNC_TASK_RETRY_BACKOFF: int = 60
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
