@@ -67,6 +67,7 @@ class TestRunSyncTaskLocking:
         _, task = connector_and_task
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         # mock connector 的 connect/pull/disconnect
         mock_connector_instance = MagicMock()
@@ -87,6 +88,7 @@ class TestRunSyncTaskExecution:
         """task_id 不存在应跳过"""
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         from src.tasks.sync_tasks import run_sync_task
         result = run_sync_task(99999)
@@ -101,6 +103,7 @@ class TestRunSyncTaskExecution:
 
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         from src.tasks.sync_tasks import run_sync_task
         result = run_sync_task(task.id)
@@ -115,6 +118,7 @@ class TestRunSyncTaskExecution:
 
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         from src.tasks.sync_tasks import run_sync_task
         result = run_sync_task(task.id)
@@ -126,6 +130,7 @@ class TestRunSyncTaskExecution:
         connector, task = connector_and_task
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         # mock connector
         mock_connector_instance = MagicMock()
@@ -162,6 +167,7 @@ class TestRunSyncTaskExecution:
         connector, task = connector_and_task
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         # mock connector that raises
         mock_connector_instance = MagicMock()
@@ -191,6 +197,7 @@ class TestRunSyncTaskExecution:
 
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         from src.tasks.sync_tasks import run_sync_task
         result = run_sync_task(task.id)
@@ -201,6 +208,7 @@ class TestRunSyncTaskExecution:
         connector, task = connector_and_task
         mocker.patch("src.tasks.sync_tasks.redis_client.lock", return_value=mock_lock_success)
         mocker.patch("src.tasks.sync_tasks.get_session_local", return_value=lambda: db_session)
+        mocker.patch.object(db_session, 'close')
 
         mock_connector_instance = MagicMock()
         mock_connector_class = MagicMock(return_value=mock_connector_instance)

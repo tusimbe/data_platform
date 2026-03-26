@@ -148,6 +148,7 @@ def run_sync_task(task_id: int):
         session.commit()
         return {"status": "failed", "task_id": task_id, "error": str(e)}
     finally:
+        session.close()
         try:
             lock.release()
         except redis.exceptions.LockNotOwnedError:
