@@ -131,7 +131,7 @@ if os.path.isdir(frontend_dir):
 **功能：**
 - 单个输入框：API Key
 - 登录按钮
-- 输入后调用 `GET /api/v1/health`（携带 Key）验证有效性
+- 输入后调用 `GET /api/v1/connectors?page=1&page_size=1`（携带 Key）验证有效性（注意：`/health` 无需认证，不能用来验证 Key）
 - 成功：Key 存入 `localStorage`，跳转 `/dashboard`
 - 失败：显示错误提示（"API Key 无效"）
 
