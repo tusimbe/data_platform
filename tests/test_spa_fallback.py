@@ -3,22 +3,9 @@ import os
 import tempfile
 
 from fastapi import FastAPI
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.staticfiles import StaticFiles
-from starlette.types import Scope
 from fastapi.testclient import TestClient
 
-
-class _SPAStaticFiles(StaticFiles):
-    """StaticFiles subclass that falls back to index.html for SPA routing."""
-
-    async def get_response(self, path: str, scope: Scope):
-        try:
-            return await super().get_response(path, scope)
-        except StarletteHTTPException as e:
-            if e.status_code == 404:
-                return await super().get_response("index.html", scope)
-            raise
+from src.main import _SPAStaticFiles
 
 
 def _create_spa_app(frontend_dir: str) -> FastAPI:
@@ -97,6 +84,8 @@ def test_path_traversal_blocked():
         app = _create_spa_app(tmpdir)
         client = TestClient(app)
 
-        # Attempt path traversal — should NOT return /etc/passwd
+        # Attempt path traversal — should NOT serve /etc/passwd
+        # StaticFiles sanitizes the path; unknown paths fall back to index.html (safe)
         response = client.get("/..%2F..%2F..%2Fetc%2Fpasswd")
-        assert response.status_code != 200 or "root:" not in response.text
+        assert "root:" not in response.text
+        assert "SPA" in response.text
