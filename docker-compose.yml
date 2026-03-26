@@ -15,5 +15,30 @@ services:
     ports:
       - "6379:6379"
 
+  celery-worker:
+    build: .
+    command: celery -A src.core.celery_app worker --loglevel=info --concurrency=4
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://dp_user:dp_pass@postgres:5432/data_platform
+      REDIS_URL: redis://redis:6379/0
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-default-dev-key}
+      API_KEY: ${API_KEY:-default-dev-key}
+
+  celery-beat:
+    build: .
+    command: >
+      celery -A src.core.celery_app beat
+      --scheduler src.tasks.scheduler:DatabaseScheduler
+      --loglevel=info
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      DATABASE_URL: postgresql://dp_user:dp_pass@postgres:5432/data_platform
+      REDIS_URL: redis://redis:6379/0
+
 volumes:
   pgdata:
