@@ -1,6 +1,5 @@
 # src/services/sync_task_service.py
 """同步任务管理服务：CRUD + 验证 + 触发执行 + 日志查询"""
-import json
 from datetime import datetime, timezone
 
 from croniter import croniter
@@ -8,12 +7,8 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.api.deps import PaginationParams, paginate
-from src.connectors.base import connector_registry, ConnectorError
-from src.core.config import get_settings
-from src.core.security import decrypt_value
 from src.models.connector import Connector
 from src.models.sync import SyncTask, SyncLog
-from src.services.sync_service import SyncExecutor
 
 
 def list_sync_tasks(session: Session, params: PaginationParams) -> dict:
@@ -67,62 +62,23 @@ def delete_sync_task(session: Session, task_id: int) -> None:
 
 
 def trigger_sync(session: Session, task_id: int) -> dict:
-    """手动触发同步（同步执行）"""
+    """手动触发同步：验证后入队 Celery task"""
     task = get_sync_task(session, task_id)
     if not task.enabled:
         raise HTTPException(status_code=400, detail="Sync task is disabled")
 
-    connector_model = session.query(Connector).filter_by(id=task.connector_id).first()
-    if not connector_model or not connector_model.enabled:
+    connector = session.query(Connector).filter_by(id=task.connector_id).first()
+    if not connector or not connector.enabled:
         raise HTTPException(status_code=400, detail="Associated connector not found or disabled")
 
-    # 实例化连接器
-    connector_class = connector_registry.get(connector_model.connector_type)
-    auth_config = connector_model.auth_config
-
-    # 解密凭证
-    settings = get_settings()
-    if isinstance(auth_config, dict) and "_encrypted" in auth_config:
-        decrypted = decrypt_value(auth_config["_encrypted"], settings.ENCRYPTION_KEY)
-        auth_config = json.loads(decrypted)
-
-    config = {
-        "base_url": connector_model.base_url,
-        "auth_config": auth_config,
+    from src.tasks.sync_tasks import run_sync_task
+    result = run_sync_task.delay(task_id)
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "celery_task_id": result.id,
+        "message": "Sync task has been queued",
     }
-    connector = connector_class(config)
-
-    try:
-        connector.connect()
-
-        if task.direction == "pull":
-            executor = SyncExecutor()
-            # 确定目标表 — 简单映射
-            target_table = _entity_to_table(task.entity)
-            result = executor.execute_pull(
-                connector=connector,
-                connector_id=connector_model.id,
-                entity=task.entity,
-                target_table=target_table,
-                mappings=[],  # 空映射，直接存储
-                session=session,
-                since=task.last_sync_at,
-            )
-
-            # 更新 last_sync_at
-            task.last_sync_at = datetime.now(timezone.utc)
-            session.flush()
-            return result
-        else:
-            # push 方向暂不支持自动触发
-            return {"status": "error", "message": "Push trigger not supported yet"}
-    except ConnectorError as e:
-        raise HTTPException(status_code=502, detail=f"Connector error: {str(e)}")
-    finally:
-        try:
-            connector.disconnect()
-        except Exception:
-            pass
 
 
 def list_sync_logs(

@@ -100,3 +100,43 @@ class TestDeleteSyncTask:
         # 验证已删除
         get_resp = client.get(f"/api/v1/sync-tasks/{tid}", headers=api_headers)
         assert get_resp.status_code == 404
+
+
+from unittest.mock import MagicMock
+
+
+class TestTriggerSync:
+    def test_trigger_returns_202(self, client, api_headers, sample_task_data, mocker):
+        """手动触发应返回 202 Accepted"""
+        create_resp = client.post("/api/v1/sync-tasks", json=sample_task_data, headers=api_headers)
+        tid = create_resp.json()["id"]
+
+        # mock Celery delay
+        mock_result = MagicMock()
+        mock_result.id = "fake-celery-task-id"
+        mocker.patch(
+            "src.tasks.sync_tasks.run_sync_task.delay",
+            return_value=mock_result,
+        )
+
+        resp = client.post(f"/api/v1/sync-tasks/{tid}/trigger", headers=api_headers)
+        assert resp.status_code == 202
+        data = resp.json()
+        assert data["status"] == "accepted"
+        assert data["task_id"] == tid
+        assert data["celery_task_id"] == "fake-celery-task-id"
+
+    def test_trigger_disabled_task(self, client, api_headers, sample_task_data):
+        """触发 disabled 任务应返回 400"""
+        create_resp = client.post("/api/v1/sync-tasks", json=sample_task_data, headers=api_headers)
+        tid = create_resp.json()["id"]
+        # disable
+        client.put(f"/api/v1/sync-tasks/{tid}", json={"enabled": False}, headers=api_headers)
+
+        resp = client.post(f"/api/v1/sync-tasks/{tid}/trigger", headers=api_headers)
+        assert resp.status_code == 400
+
+    def test_trigger_not_found(self, client, api_headers):
+        """触发不存在的任务应返回 404"""
+        resp = client.post("/api/v1/sync-tasks/99999/trigger", headers=api_headers)
+        assert resp.status_code == 404

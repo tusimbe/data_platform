@@ -49,3 +49,10 @@ class SyncLogResponse(BaseModel):
     finished_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class SyncTaskTriggerResponse(BaseModel):
+    status: str
+    task_id: int
+    celery_task_id: str
+    message: str

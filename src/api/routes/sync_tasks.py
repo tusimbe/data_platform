@@ -60,11 +60,9 @@ def delete_sync_task(
     return Response(status_code=204)
 
 
-@router.post("/sync-tasks/{task_id}/trigger")
+@router.post("/sync-tasks/{task_id}/trigger", status_code=202)
 def trigger_sync(
     task_id: int,
     session: Session = Depends(get_db),
 ):
-    result = sync_task_service.trigger_sync(session, task_id)
-    session.commit()
-    return result
+    return sync_task_service.trigger_sync(session, task_id)
