@@ -150,7 +150,7 @@ if os.path.isdir(frontend_dir):
 **功能：**
 - 系统健康状态：调用 `GET /api/v1/health`
   - 显示 overall status（healthy/degraded/unhealthy）及颜色指示
-  - 三个组件卡片：Database、Redis、Celery，各显示状态 + 延迟
+  - 三个组件卡片：Database、Redis、Celery，各显示状态 + 延迟（healthy 时显示 `latency_ms`，unhealthy 时显示 `error` 信息；Celery healthy 时额外显示 `workers` 数量）
 - 统计摘要卡片：
   - 连接器总数 / 启用数：调用 `GET /api/v1/connectors`
   - 同步任务总数 / 启用数：调用 `GET /api/v1/sync-tasks`
@@ -172,12 +172,13 @@ if os.path.isdir(frontend_dir):
 **列表页功能：**
 - 表格列：ID、名称、类型、base_url、启用状态、创建时间、操作
 - 分页：使用 Ant Design `Table` 内置分页，调用 `GET /api/v1/connectors?page=N&page_size=M`
-- 操作列：编辑按钮、禁用/启用按钮、删除按钮
+- 操作列：编辑按钮、禁用/启用按钮（`PUT /api/v1/connectors/{id}` 设置 `enabled`）、删除按钮
 
 **创建/编辑：**
 - 使用 Ant Design `Modal`（模态框）
 - 表单字段：
   - 名称（`Input`，必填）
+  - 描述（`Input.TextArea`，可选）
   - 类型（`Select` 下拉，选项：`kingdee_erp`, `kingdee_plm`, `feishu`, `fenxiangxiaoke`, `lingxing`, `zentao`）
   - Base URL（`Input`，必填）
   - Auth Config（`Input.TextArea`，JSON 格式，必填）
