@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir .
 
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY entrypoint.sh ./
 
 # 从前端构建阶段复制产物
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
@@ -27,4 +28,4 @@ RUN useradd --create-home appuser
 USER appuser
 
 EXPOSE 8000
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./entrypoint.sh"]
