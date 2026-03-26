@@ -5,7 +5,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from src.connectors.base import connector_registry, ConnectorError, PushResult
+from src.connectors.base import connector_registry, ConnectorError, ConnectorNotFoundError, PushResult
 from src.core.config import get_settings
 from src.core.security import decrypt_value
 from src.models.connector import Connector
@@ -36,7 +36,13 @@ def execute_push(
         )
 
     # 实例化连接器
-    connector_class = connector_registry.get(connector_type)
+    try:
+        connector_class = connector_registry.get(connector_type)
+    except ConnectorNotFoundError:
+        raise HTTPException(
+            status_code=501,
+            detail=f"Connector type '{connector_type}' is not implemented",
+        )
     auth_config = connector_model.auth_config
 
     # 解密凭证
