@@ -3,6 +3,7 @@ import { Card, Col, Row, Table, Tag, Button, Skeleton, message } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import client from '../api/client';
+import { SyncLogItem } from '../types/api';
 
 interface HealthComponent {
   status: string;
@@ -15,14 +16,6 @@ interface HealthData {
   status: string;
   components: Record<string, HealthComponent>;
   version: string;
-}
-
-interface SyncLogItem {
-  id: number;
-  entity: string;
-  status: string;
-  total_records: number;
-  started_at: string;
 }
 
 interface StatsData {

@@ -3,23 +3,9 @@ import { Table, Tag, Select, Input, DatePicker, Space, Card, message } from 'ant
 import type { ColumnsType } from 'antd/es/table';
 import type { Dayjs } from 'dayjs';
 import client from '../api/client';
+import { SyncLogItem } from '../types/api';
 
 const { RangePicker } = DatePicker;
-
-interface SyncLogItem {
-  id: number;
-  sync_task_id: number | null;
-  connector_id: number;
-  entity: string;
-  direction: string;
-  status: string;
-  total_records: number;
-  success_count: number;
-  failure_count: number;
-  error_details: Record<string, unknown> | null;
-  started_at: string;
-  finished_at: string | null;
-}
 
 const statusColorMap: Record<string, string> = {
   success: 'green',
@@ -42,6 +28,19 @@ const SyncLogs: React.FC = () => {
     [Dayjs | null, Dayjs | null] | null
   >(null);
 
+  const [debouncedConnectorId, setDebouncedConnectorId] = useState('');
+  const [debouncedEntity, setDebouncedEntity] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedConnectorId(filterConnectorId), 300);
+    return () => clearTimeout(timer);
+  }, [filterConnectorId]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedEntity(filterEntity), 300);
+    return () => clearTimeout(timer);
+  }, [filterEntity]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -49,8 +48,8 @@ const SyncLogs: React.FC = () => {
         page,
         page_size: pageSize,
       };
-      if (filterConnectorId) params.connector_id = filterConnectorId;
-      if (filterEntity) params.entity = filterEntity;
+      if (debouncedConnectorId) params.connector_id = debouncedConnectorId;
+      if (debouncedEntity) params.entity = debouncedEntity;
       if (filterStatus) params.status = filterStatus;
       if (filterDateRange?.[0]) {
         params.started_after = filterDateRange[0].toISOString();
@@ -67,16 +66,11 @@ const SyncLogs: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, filterConnectorId, filterEntity, filterStatus, filterDateRange]);
+  }, [page, pageSize, debouncedConnectorId, debouncedEntity, filterStatus, filterDateRange]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  // 筛选变化时回到第 1 页
-  useEffect(() => {
-    setPage(1);
-  }, [filterConnectorId, filterEntity, filterStatus, filterDateRange]);
 
   const columns: ColumnsType<SyncLogItem> = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
@@ -119,21 +113,21 @@ const SyncLogs: React.FC = () => {
           <Input
             placeholder="连接器 ID"
             value={filterConnectorId}
-            onChange={(e) => setFilterConnectorId(e.target.value)}
+            onChange={(e) => { setFilterConnectorId(e.target.value); setPage(1); }}
             style={{ width: 120 }}
             allowClear
           />
           <Input
             placeholder="Entity"
             value={filterEntity}
-            onChange={(e) => setFilterEntity(e.target.value)}
+            onChange={(e) => { setFilterEntity(e.target.value); setPage(1); }}
             style={{ width: 150 }}
             allowClear
           />
           <Select
             placeholder="状态"
             value={filterStatus}
-            onChange={setFilterStatus}
+            onChange={(v) => { setFilterStatus(v); setPage(1); }}
             allowClear
             style={{ width: 120 }}
             options={[
@@ -144,9 +138,10 @@ const SyncLogs: React.FC = () => {
           />
           <RangePicker
             showTime
-            onChange={(dates) =>
-              setFilterDateRange(dates as [Dayjs | null, Dayjs | null] | null)
-            }
+            onChange={(dates) => {
+              setFilterDateRange(dates as [Dayjs | null, Dayjs | null] | null);
+              setPage(1);
+            }}
           />
         </Space>
       </Card>

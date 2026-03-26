@@ -262,7 +262,10 @@ const Connectors: React.FC = () => {
           <Form.Item
             name="base_url"
             label="Base URL"
-            rules={[{ required: true, message: '请输入 Base URL' }]}
+            rules={[
+              { required: true, message: '请输入 Base URL' },
+              { type: 'url', message: '请输入有效的 URL（如 https://example.com）' },
+            ]}
           >
             <Input />
           </Form.Item>
