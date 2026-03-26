@@ -3,10 +3,14 @@ from src.models.connector import Connector
 from src.models.sync import SyncTask, SyncLog
 from src.models.raw_data import RawData
 from src.models.unified import (
-    UnifiedCustomer, UnifiedOrder, UnifiedProduct,
-    UnifiedInventory, UnifiedProject, UnifiedContact,
+    UnifiedCustomer,
+    UnifiedOrder,
+    UnifiedProduct,
+    UnifiedInventory,
+    UnifiedProject,
+    UnifiedContact,
 )
-from src.models.field_mapping import FieldMapping, EntitySchema
+from src.models.field_mapping import FieldMapping
 
 
 def test_base_model_exists():
@@ -34,8 +38,11 @@ def test_create_connector(db_session):
 def test_create_sync_task(db_session):
     """应能创建同步任务"""
     c = Connector(
-        name="测试", connector_type="test", base_url="http://test",
-        auth_config={}, enabled=True,
+        name="测试",
+        connector_type="test",
+        base_url="http://test",
+        auth_config={},
+        enabled=True,
     )
     db_session.add(c)
     db_session.flush()
@@ -56,15 +63,21 @@ def test_create_sync_task(db_session):
 def test_create_sync_log(db_session):
     """应能创建同步日志"""
     c = Connector(
-        name="测试", connector_type="test", base_url="http://test",
-        auth_config={}, enabled=True,
+        name="测试",
+        connector_type="test",
+        base_url="http://test",
+        auth_config={},
+        enabled=True,
     )
     db_session.add(c)
     db_session.flush()
 
     task = SyncTask(
-        connector_id=c.id, entity="order", direction="pull",
-        cron_expression="0 * * * *", enabled=True,
+        connector_id=c.id,
+        entity="order",
+        direction="pull",
+        cron_expression="0 * * * *",
+        enabled=True,
     )
     db_session.add(task)
     db_session.flush()
@@ -90,8 +103,11 @@ def test_create_sync_log(db_session):
 def test_create_raw_data(db_session):
     """应能存储原始 JSONB 数据"""
     c = Connector(
-        name="测试", connector_type="test", base_url="http://test",
-        auth_config={}, enabled=True,
+        name="测试",
+        connector_type="test",
+        base_url="http://test",
+        auth_config={},
+        enabled=True,
     )
     db_session.add(c)
     db_session.flush()
@@ -156,9 +172,83 @@ def test_create_field_mapping(db_session):
 
 def test_unified_tables_have_source_traceability():
     """所有统一表应包含溯源字段"""
-    for model in [UnifiedCustomer, UnifiedOrder, UnifiedProduct,
-                  UnifiedInventory, UnifiedProject, UnifiedContact]:
+    for model in [
+        UnifiedCustomer,
+        UnifiedOrder,
+        UnifiedProduct,
+        UnifiedInventory,
+        UnifiedProject,
+        UnifiedContact,
+    ]:
         columns = {c.name for c in model.__table__.columns}
         assert "source_system" in columns, f"{model.__name__} missing source_system"
         assert "external_id" in columns, f"{model.__name__} missing external_id"
         assert "source_data_id" in columns, f"{model.__name__} missing source_data_id"
+
+
+def test_unified_customer_unique_constraint(db_session):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    from src.models.unified import UnifiedCustomer
+
+    c1 = UnifiedCustomer(
+        source_system="fenxiangxiaoke",
+        external_id="C-DUP-001",
+        name="客户A",
+    )
+    db_session.add(c1)
+    db_session.flush()
+
+    c2 = UnifiedCustomer(
+        source_system="fenxiangxiaoke",
+        external_id="C-DUP-001",
+        name="客户B",
+    )
+    db_session.add(c2)
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()
+
+
+def test_unified_order_unique_constraint(db_session):
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+    from src.models.unified import UnifiedOrder
+
+    o1 = UnifiedOrder(
+        source_system="kingdee_erp",
+        external_id="SO-DUP-001",
+        order_number="SO-001",
+    )
+    db_session.add(o1)
+    db_session.flush()
+
+    o2 = UnifiedOrder(
+        source_system="kingdee_erp",
+        external_id="SO-DUP-001",
+        order_number="SO-002",
+    )
+    db_session.add(o2)
+    with pytest.raises(IntegrityError):
+        db_session.flush()
+    db_session.rollback()
+
+
+def test_unified_unique_constraint_allows_different_source(db_session):
+    from src.models.unified import UnifiedCustomer
+
+    c1 = UnifiedCustomer(
+        source_system="fenxiangxiaoke",
+        external_id="C-MULTI-001",
+        name="客户A",
+    )
+    c2 = UnifiedCustomer(
+        source_system="kingdee_erp",
+        external_id="C-MULTI-001",
+        name="客户B",
+    )
+    db_session.add(c1)
+    db_session.add(c2)
+    db_session.flush()
+    assert c1.id is not None
+    assert c2.id is not None

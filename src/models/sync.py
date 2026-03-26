@@ -18,6 +18,7 @@ class SyncTask(Base, TimestampMixin):
     direction: Mapped[str] = mapped_column(String(10), nullable=False)  # "pull" | "push"
     cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    config: Mapped[dict | None] = mapped_column(JSONType, nullable=True, default=dict)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     connector = relationship("Connector", back_populates="sync_tasks")
@@ -37,9 +38,7 @@ class SyncLog(Base):
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
     error_details: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     sync_task = relationship("SyncTask", back_populates="sync_logs")

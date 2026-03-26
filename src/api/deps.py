@@ -16,6 +16,9 @@ def get_current_api_key(request: Request) -> str:
     """API Key 认证依赖。从 Authorization: Bearer <key> 或 X-API-Key 头提取。"""
     settings = get_settings()
 
+    if not settings.API_KEY:
+        raise HTTPException(status_code=500, detail="API_KEY not configured")
+
     # 尝试 Authorization: Bearer <key>
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):

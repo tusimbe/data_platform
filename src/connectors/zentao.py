@@ -6,6 +6,7 @@
 认证方式：Session Token via /api.php/v1/tokens
 分页方式：limit + offset
 """
+
 import time
 import logging
 from datetime import datetime
@@ -25,6 +26,7 @@ from src.connectors.base import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 100
+MAX_PAGES = 1000
 
 # 禅道支持的实体及对应 API 路径
 ZENTAO_ENTITIES = {
@@ -57,7 +59,7 @@ RETRY_BACKOFF = [1, 2, 4]
 @register_connector("zentao")
 class ZentaoConnector(BaseConnector):
     """禅道连接器（mock 版本，预留真实 API 结构）
-    
+
     使用 Session Token 认证，通过 /api.php/v1/tokens 获取。
     支持项目、需求、任务、Bug 等实体的读写操作。
     """
@@ -106,9 +108,7 @@ class ZentaoConnector(BaseConnector):
             return HealthStatus(status="healthy", latency_ms=round(latency, 2))
         except Exception as e:
             latency = (time.time() - start) * 1000
-            return HealthStatus(
-                status="unhealthy", latency_ms=round(latency, 2), error=str(e)
-            )
+            return HealthStatus(status="unhealthy", latency_ms=round(latency, 2), error=str(e))
 
     def list_entities(self) -> list[EntityInfo]:
         """列出支持的实体"""
@@ -124,15 +124,15 @@ class ZentaoConnector(BaseConnector):
         filters: dict | None = None,
     ) -> list[dict]:
         """拉取禅道实体数据
-        
+
         Args:
             entity: 实体类型 (project/story/task/bug)
             since: 增量同步起始时间
             filters: 额外过滤参数
-            
+
         Returns:
             记录列表
-            
+
         Raises:
             ConnectorPullError: 拉取失败时抛出
         """
@@ -145,22 +145,28 @@ class ZentaoConnector(BaseConnector):
 
         all_records = []
         offset = 0
+        page_count = 0
 
         try:
             while True:
+                page_count += 1
+                if page_count > MAX_PAGES:
+                    logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
+                    break
+
                 params = {
                     "limit": DEFAULT_PAGE_SIZE,
                     "offset": offset,
                 }
-                
+
                 if filters:
                     params.update(filters)
-                    
+
                 if since:
                     params["lastEditedDate[>]"] = since.isoformat()
 
                 result = self._request("GET", url, params=params)
-                
+
                 if not result.get("success", True):
                     error_msg = result.get("message", "未知错误")
                     raise ConnectorPullError(f"禅道 API 错误: {error_msg}")
@@ -185,13 +191,13 @@ class ZentaoConnector(BaseConnector):
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
         """推送数据到禅道
-        
+
         禅道支持通过 API 创建实体数据。
-        
+
         Args:
             entity: 实体类型
             records: 要推送的记录列表
-            
+
         Returns:
             PushResult 包含成功和失败计数
         """
@@ -209,21 +215,25 @@ class ZentaoConnector(BaseConnector):
         for record in records:
             try:
                 result = self._request("POST", url, json=record)
-                
+
                 if result.get("success", True):
                     success_count += 1
                 else:
                     failure_count += 1
-                    failures.append({
-                        "record": record,
-                        "error": result.get("message", "未知错误"),
-                    })
+                    failures.append(
+                        {
+                            "record": record,
+                            "error": result.get("message", "未知错误"),
+                        }
+                    )
             except Exception as e:
                 failure_count += 1
-                failures.append({
-                    "record": record,
-                    "error": str(e),
-                })
+                failures.append(
+                    {
+                        "record": record,
+                        "error": str(e),
+                    }
+                )
 
         return PushResult(
             success_count=success_count,
@@ -235,13 +245,11 @@ class ZentaoConnector(BaseConnector):
         """获取实体配置信息"""
         return ZENTAO_ENTITIES.get(entity, {})
 
-    def _request(
-        self, method: str, url: str, skip_auth: bool = False, **kwargs
-    ) -> dict:
+    def _request(self, method: str, url: str, skip_auth: bool = False, **kwargs) -> dict:
         """带重试的 HTTP 请求"""
         headers = kwargs.pop("headers", {})
         headers["Content-Type"] = "application/json"
-        
+
         # 添加 token 认证（除非跳过）
         if not skip_auth and self._token:
             headers["Token"] = self._token

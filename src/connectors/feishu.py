@@ -12,12 +12,12 @@ from src.connectors.base import (
     EntityInfo,
     PushResult,
     ConnectorPullError,
-    ConnectorPushError,
 )
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 100
+MAX_PAGES = 1000
 
 # 飞书支持的实体及对应 API 路径
 FEISHU_ENTITIES = {
@@ -45,7 +45,7 @@ RETRY_BACKOFF = [1, 2, 4]
 @register_connector("feishu")
 class FeishuConnector(BaseConnector):
     """飞书连接器
-    
+
     使用 OAuth2 tenant_access_token 认证，支持自动刷新过期 token。
     """
 
@@ -91,9 +91,7 @@ class FeishuConnector(BaseConnector):
             return HealthStatus(status="healthy", latency_ms=round(latency, 2))
         except Exception as e:
             latency = (time.time() - start) * 1000
-            return HealthStatus(
-                status="unhealthy", latency_ms=round(latency, 2), error=str(e)
-            )
+            return HealthStatus(status="unhealthy", latency_ms=round(latency, 2), error=str(e))
 
     def list_entities(self) -> list[EntityInfo]:
         return [
@@ -108,18 +106,18 @@ class FeishuConnector(BaseConnector):
         filters: dict | None = None,
     ) -> list[dict]:
         """拉取飞书实体数据
-        
+
         Args:
             entity: 实体类型 (employee/department/approval)
             since: 增量同步起始时间 (飞书 API 支持有限)
             filters: 额外过滤参数
-            
+
         Returns:
             记录列表
-            
+
         Raises:
             ConnectorPullError: 拉取失败时抛出
-            
+
         Note:
             filter 参数由调用方预验证，本方法不做额外校验。
         """
@@ -132,9 +130,15 @@ class FeishuConnector(BaseConnector):
 
         all_records = []
         page_token = None
+        page_count = 0
 
         try:
             while True:
+                page_count += 1
+                if page_count > MAX_PAGES:
+                    logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
+                    break
+
                 params = {"page_size": DEFAULT_PAGE_SIZE}
                 if page_token:
                     params["page_token"] = page_token
@@ -162,24 +166,24 @@ class FeishuConnector(BaseConnector):
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
         """飞书大部分实体不支持写入，返回失败结果
-        
+
         Args:
             entity: 实体类型
             records: 要推送的记录列表
-            
+
         Returns:
             PushResult，所有记录标记为失败
         """
-        return PushResult(success_count=0, failure_count=len(records), failures=[
-            {"record": r, "error": "飞书不支持此实体的写入"} for r in records
-        ])
+        return PushResult(
+            success_count=0,
+            failure_count=len(records),
+            failures=[{"record": r, "error": "飞书不支持此实体的写入"} for r in records],
+        )
 
     def get_schema(self, entity: str) -> dict:
         return FEISHU_ENTITIES.get(entity, {})
 
-    def _request(
-        self, method: str, url: str, skip_auth: bool = False, **kwargs
-    ) -> dict:
+    def _request(self, method: str, url: str, skip_auth: bool = False, **kwargs) -> dict:
         """带重试的 HTTP 请求"""
         headers = kwargs.pop("headers", {})
         if not skip_auth and self._token:

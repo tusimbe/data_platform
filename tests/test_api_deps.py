@@ -30,10 +30,20 @@ class TestAPIKeyAuth:
         resp = client.get("/api/v1/health")
         assert resp.status_code == 200
 
+    def test_empty_api_key_config_returns_500(self, client, db_session):
+        from unittest.mock import patch, MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.API_KEY = ""
+        with patch("src.api.deps.get_settings", return_value=mock_settings):
+            resp = client.get("/api/v1/connectors", headers={"Authorization": "Bearer anything"})
+            assert resp.status_code == 500
+
 
 class TestPaginationParams:
     def test_pagination_defaults(self):
         from src.api.deps import PaginationParams
+
         params = PaginationParams(page=1, page_size=20)
         assert params.page == 1
         assert params.page_size == 20
@@ -41,5 +51,18 @@ class TestPaginationParams:
 
     def test_pagination_offset_calculation(self):
         from src.api.deps import PaginationParams
+
         params = PaginationParams(page=3, page_size=10)
         assert params.offset == 20
+
+
+def test_cors_preflight_returns_allow_headers(client):
+    resp = client.options(
+        "/api/v1/connectors",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert resp.status_code == 200
+    assert "access-control-allow-origin" in resp.headers

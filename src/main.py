@@ -2,6 +2,7 @@
 import os
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.staticfiles import StaticFiles
 from starlette.types import Scope
@@ -13,11 +14,21 @@ from src.api.routes.sync_tasks import router as sync_tasks_router
 from src.api.routes.sync_logs import router as sync_logs_router
 from src.api.routes.push import router as push_router
 from src.api.routes.data import router as data_router
+from src.core.config import get_settings
 
 app = FastAPI(title="数据中台", version="0.1.0")
 
 # 注册统一错误处理
 register_error_handlers(app)
+
+_settings = get_settings()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 注册路由 — 健康检查免认证
 app.include_router(health_router, prefix="/api/v1", tags=["health"])

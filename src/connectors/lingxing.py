@@ -15,12 +15,12 @@ from src.connectors.base import (
     EntityInfo,
     PushResult,
     ConnectorPullError,
-    ConnectorPushError,
 )
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 100
+MAX_PAGES = 1000
 
 LINGXING_ENTITIES = {
     "product": {
@@ -63,22 +63,20 @@ class LingxingConnector(BaseConnector):
 
     def _generate_signature(self, params: dict) -> str:
         """生成 HMAC-SHA256 签名
-        
+
         Args:
             params: 请求参数字典
-            
+
         Returns:
             签名字符串
         """
         sorted_params = sorted(params.items())
         sign_string = urlencode(sorted_params)
-        
+
         signature = hmac.new(
-            self.config["app_secret"].encode("utf-8"),
-            sign_string.encode("utf-8"),
-            hashlib.sha256
+            self.config["app_secret"].encode("utf-8"), sign_string.encode("utf-8"), hashlib.sha256
         ).hexdigest()
-        
+
         return signature
 
     def health_check(self) -> HealthStatus:
@@ -92,9 +90,7 @@ class LingxingConnector(BaseConnector):
             return HealthStatus(status="healthy", latency_ms=round(latency, 2))
         except Exception as e:
             latency = (time.time() - start) * 1000
-            return HealthStatus(
-                status="unhealthy", latency_ms=round(latency, 2), error=str(e)
-            )
+            return HealthStatus(status="unhealthy", latency_ms=round(latency, 2), error=str(e))
 
     def list_entities(self) -> list[EntityInfo]:
         """列出支持的实体类型"""
@@ -110,15 +106,15 @@ class LingxingConnector(BaseConnector):
         filters: dict | None = None,
     ) -> list[dict]:
         """拉取领星实体数据
-        
+
         Args:
             entity: 实体类型 (product/order/inventory/shipment)
             since: 增量同步起始时间
             filters: 额外过滤参数
-            
+
         Returns:
             记录列表
-            
+
         Raises:
             ConnectorPullError: 拉取失败时抛出
         """
@@ -133,12 +129,16 @@ class LingxingConnector(BaseConnector):
 
         try:
             while True:
+                if page > MAX_PAGES:
+                    logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
+                    break
+
                 params = {"page": page, "size": DEFAULT_PAGE_SIZE}
                 if filters:
                     params.update(filters)
 
                 result = self._request("GET", url, params=params)
-                
+
                 if result.get("code") != 0:
                     raise ConnectorPullError(f"领星 API 错误: {result.get('message')}")
 
@@ -149,7 +149,7 @@ class LingxingConnector(BaseConnector):
                 total = result.get("total", len(data))
                 if len(all_records) >= total or len(data) == 0:
                     break
-                    
+
                 page += 1
 
             return all_records
@@ -161,46 +161,42 @@ class LingxingConnector(BaseConnector):
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
         """领星不支持写入，返回失败结果
-        
+
         Args:
             entity: 实体类型
             records: 要推送的记录列表
-            
+
         Returns:
             PushResult，所有记录标记为失败
         """
         return PushResult(
             success_count=0,
             failure_count=len(records),
-            failures=[
-                {"record": r, "error": "领星不支持此实体的写入"} for r in records
-            ]
+            failures=[{"record": r, "error": "领星不支持此实体的写入"} for r in records],
         )
 
     def get_schema(self, entity: str) -> dict:
         """获取实体字段结构"""
         return LINGXING_ENTITIES.get(entity, {})
 
-    def _request(
-        self, method: str, url: str, params: dict | None = None, **kwargs
-    ) -> dict:
+    def _request(self, method: str, url: str, params: dict | None = None, **kwargs) -> dict:
         """带签名的 HTTP 请求
-        
+
         Args:
             method: HTTP 方法
             url: 请求 URL
             params: 请求参数
             **kwargs: 其他 httpx 参数
-            
+
         Returns:
             响应 JSON
         """
         params = params or {}
-        
+
         # 添加签名相关参数
         params["app_id"] = self.config["app_id"]
         params["timestamp"] = str(int(time.time()))
-        
+
         # 生成签名
         params["sign"] = self._generate_signature(params)
 

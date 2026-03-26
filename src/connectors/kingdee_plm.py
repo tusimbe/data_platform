@@ -1,6 +1,7 @@
 # src/connectors/kingdee_plm.py
 import time
 import logging
+import re
 from datetime import datetime
 
 import httpx
@@ -28,6 +29,8 @@ KINGDEE_PLM_ENTITIES = {
 MAX_RETRIES = 3
 RETRY_BACKOFF = [1, 2, 4]
 DEFAULT_PAGE_LIMIT = 2000
+MAX_PAGES = 500
+_SAFE_FILTER_VALUE = re.compile(r"^[\w\s\-\.:/]+$")
 
 
 @register_connector("kingdee_plm")
@@ -38,6 +41,13 @@ class KingdeePLMConnector(BaseConnector):
         super().__init__(config)
         self._token: str | None = None
         self._client = httpx.Client(timeout=30.0)
+
+    @staticmethod
+    def _sanitize_filter_value(value: str) -> str:
+        str_val = str(value)
+        if not _SAFE_FILTER_VALUE.match(str_val):
+            raise ConnectorPullError("Invalid filter value: contains unsafe characters")
+        return str_val
 
     def connect(self) -> None:
         """通过金蝶 API 获取会话令牌"""
@@ -71,9 +81,7 @@ class KingdeePLMConnector(BaseConnector):
             return HealthStatus(status="healthy", latency_ms=round(latency, 2))
         except Exception as e:
             latency = (time.time() - start) * 1000
-            return HealthStatus(
-                status="unhealthy", latency_ms=round(latency, 2), error=str(e)
-            )
+            return HealthStatus(status="unhealthy", latency_ms=round(latency, 2), error=str(e))
 
     def list_entities(self) -> list[EntityInfo]:
         return [
@@ -102,8 +110,7 @@ class KingdeePLMConnector(BaseConnector):
             ConnectorPullError: 实体类型不支持或API调用失败
 
         Note:
-            filter值由调用方负责预验证，本方法不做SQL注入防护。
-            此为内部连接器API，外部输入应在上层服务中校验。
+            filter值会在本方法中执行白名单校验以防止注入。
         """
         if entity not in KINGDEE_PLM_ENTITIES:
             raise ConnectorPullError(f"不支持的实体类型: {entity}")
@@ -118,22 +125,43 @@ class KingdeePLMConnector(BaseConnector):
         if since:
             filter_string = f"FModifyDate >= '{since.strftime('%Y-%m-%d %H:%M:%S')}'"
         if filters:
-            extra = " AND ".join(f"{k} = '{v}'" for k, v in filters.items())
+            extra = " AND ".join(
+                f"{self._sanitize_filter_value(k)} = '{self._sanitize_filter_value(v)}'"
+                for k, v in filters.items()
+            )
             filter_string = f"{filter_string} AND {extra}" if filter_string else extra
 
-        payload = {
-            "FormId": form_id,
-            "FieldKeys": "",
-            "FilterString": filter_string,
-            "OrderString": "",
-            "TopRowCount": 0,
-            "StartRow": 0,
-            "Limit": DEFAULT_PAGE_LIMIT,
-        }
-
         try:
-            result = self._request("POST", url, json=payload)
-            return result if isinstance(result, list) else []
+            all_records = []
+            start_row = 0
+            page_count = 0
+
+            while True:
+                page_count += 1
+                if page_count > MAX_PAGES:
+                    logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
+                    break
+
+                payload = {
+                    "FormId": form_id,
+                    "FieldKeys": "",
+                    "FilterString": filter_string,
+                    "OrderString": "",
+                    "TopRowCount": 0,
+                    "StartRow": start_row,
+                    "Limit": DEFAULT_PAGE_LIMIT,
+                }
+
+                result = self._request("POST", url, json=payload)
+                batch = result if isinstance(result, list) else []
+                all_records.extend(batch)
+
+                if len(batch) < DEFAULT_PAGE_LIMIT:
+                    break
+
+                start_row += DEFAULT_PAGE_LIMIT
+
+            return all_records
         except Exception as e:
             logger.error(f"金蝶PLM拉取失败: entity={entity}, error={e}")
             raise ConnectorPullError(f"拉取 {entity} 失败: {e}") from e
@@ -172,10 +200,12 @@ class KingdeePLMConnector(BaseConnector):
                 success_count += 1
             except Exception as e:
                 failure_count += 1
-                failures.append({
-                    "record": record.get("FNumber", "unknown"),
-                    "error": str(e),
-                })
+                failures.append(
+                    {
+                        "record": record.get("FNumber", "unknown"),
+                        "error": str(e),
+                    }
+                )
 
         return PushResult(
             success_count=success_count,
@@ -199,9 +229,7 @@ class KingdeePLMConnector(BaseConnector):
                 resp = self._client.request(method, url, headers=headers, **kwargs)
 
                 if resp.status_code == 429:
-                    retry_after = int(
-                        resp.headers.get("Retry-After", RETRY_BACKOFF[attempt])
-                    )
+                    retry_after = int(resp.headers.get("Retry-After", RETRY_BACKOFF[attempt]))
                     time.sleep(retry_after)
                     continue
 

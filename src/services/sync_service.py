@@ -42,10 +42,12 @@ class SyncExecutor:
                 mapped["_raw"] = record  # 保留原始数据引用
                 transformed.append(mapped)
             except Exception as e:
-                errors.append({
-                    "record": record,
-                    "error": str(e),
-                })
+                errors.append(
+                    {
+                        "record": record,
+                        "error": str(e),
+                    }
+                )
 
         return transformed, errors
 
@@ -69,11 +71,15 @@ class SyncExecutor:
                 continue
 
             # 更新插入 raw_data
-            existing = session.query(RawData).filter_by(
-                connector_id=connector_id,
-                entity=entity,
-                external_id=str(external_id),
-            ).first()
+            existing = (
+                session.query(RawData)
+                .filter_by(
+                    connector_id=connector_id,
+                    entity=entity,
+                    external_id=str(external_id),
+                )
+                .first()
+            )
 
             if existing:
                 existing.data = raw
@@ -93,6 +99,22 @@ class SyncExecutor:
 
         session.flush()
 
+        raw_data_id_map = {}
+        for raw in raw_records:
+            ext_id = self._extract_external_id(raw, entity)
+            if ext_id:
+                rd = (
+                    session.query(RawData)
+                    .filter_by(
+                        connector_id=connector_id,
+                        entity=entity,
+                        external_id=str(ext_id),
+                    )
+                    .first()
+                )
+                if rd:
+                    raw_data_id_map[str(ext_id)] = rd.id
+
         # 更新插入统一表
         unified_model = self._get_unified_model(target_table)
         if unified_model is not None:
@@ -106,12 +128,17 @@ class SyncExecutor:
                 if not ext_id:
                     continue
 
-                existing_unified = session.query(unified_model).filter_by(
-                    source_system=connector_type,
-                    external_id=str(ext_id),
-                ).first()
+                existing_unified = (
+                    session.query(unified_model)
+                    .filter_by(
+                        source_system=connector_type,
+                        external_id=str(ext_id),
+                    )
+                    .first()
+                )
 
                 if existing_unified:
+                    existing_unified.source_data_id = raw_data_id_map.get(str(ext_id))
                     for k, v in mapped.items():
                         if hasattr(existing_unified, k):
                             coerced = self._coerce_value(unified_model, k, v)
@@ -119,13 +146,13 @@ class SyncExecutor:
                 else:
                     mapped["source_system"] = connector_type
                     mapped["external_id"] = str(ext_id)
+                    mapped["source_data_id"] = raw_data_id_map.get(str(ext_id))
                     # 只传统一模型实际拥有的列
                     valid_cols = {c.name for c in unified_model.__table__.columns}
                     filtered = {k: v for k, v in mapped.items() if k in valid_cols}
                     # 类型强制转换
                     filtered = {
-                        k: self._coerce_value(unified_model, k, v)
-                        for k, v in filtered.items()
+                        k: self._coerce_value(unified_model, k, v) for k, v in filtered.items()
                     }
                     session.add(unified_model(**filtered))
 
@@ -156,7 +183,7 @@ class SyncExecutor:
                 connector_id=connector_id,
                 entity=entity,
                 direction="pull",
-                status="failure",
+                status="failed",
                 total_records=0,
                 success_count=0,
                 failure_count=0,
@@ -166,7 +193,7 @@ class SyncExecutor:
             session.add(log)
             session.flush()
             return {
-                "status": "failure",
+                "status": "failed",
                 "total_records": 0,
                 "success_count": 0,
                 "failure_count": 0,
@@ -218,18 +245,23 @@ class SyncExecutor:
         # 阶段3：存储（raw_data + 统一表）
         try:
             stored = self.store_phase(
-                connector_id, entity, raw_records, transformed,
-                target_table, session, sync_log_id=log.id,
+                connector_id,
+                entity,
+                raw_records,
+                transformed,
+                target_table,
+                session,
+                sync_log_id=log.id,
             )
         except Exception as e:
             logger.error(f"存储阶段失败: {e}")
-            log.status = "failure"
+            log.status = "failed"
             log.failure_count = total
             log.error_details = {"phase": "store", "error": str(e)}
             log.finished_at = datetime.now(timezone.utc)
             session.flush()
             return {
-                "status": "failure",
+                "status": "failed",
                 "total_records": total,
                 "success_count": 0,
                 "failure_count": total,
@@ -267,9 +299,14 @@ class SyncExecutor:
     def _get_unified_model(target_table: str):
         """根据表名获取统一模型类"""
         from src.models.unified import (
-            UnifiedCustomer, UnifiedOrder, UnifiedProduct,
-            UnifiedInventory, UnifiedProject, UnifiedContact,
+            UnifiedCustomer,
+            UnifiedOrder,
+            UnifiedProduct,
+            UnifiedInventory,
+            UnifiedProject,
+            UnifiedContact,
         )
+
         table_map = {
             "unified_customers": UnifiedCustomer,
             "unified_orders": UnifiedOrder,
@@ -284,13 +321,13 @@ class SyncExecutor:
     def _connector_type_for_id(connector_id: int, session) -> str:
         """根据 connector_id 查询 connector_type"""
         from src.models.connector import Connector
+
         c = session.query(Connector).filter_by(id=connector_id).first()
         return c.connector_type if c else "unknown"
 
     @staticmethod
     def _coerce_value(model_class, column_name: str, value):
         """根据模型列类型强制转换值（如字符串日期 → date 对象）"""
-        from datetime import date as date_type
         from sqlalchemy import Date, DateTime
 
         if value is None:

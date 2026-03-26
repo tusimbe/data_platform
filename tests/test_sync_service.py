@@ -1,7 +1,6 @@
 # tests/test_sync_service.py
 import pytest
-from unittest.mock import MagicMock, patch
-from datetime import datetime
+from unittest.mock import MagicMock
 
 from src.services.sync_service import SyncExecutor
 
@@ -39,9 +38,7 @@ def test_pull_phase(executor, mock_connector):
         entity="sales_order",
         since=None,
     )
-    mock_connector.pull.assert_called_once_with(
-        entity="sales_order", since=None, filters=None
-    )
+    mock_connector.pull.assert_called_once_with(entity="sales_order", since=None, filters=None)
     assert len(records) == 2
 
 
@@ -84,8 +81,11 @@ def test_full_pull_sync(executor, mock_connector, mock_mappings, db_session):
 
     # 创建测试用连接器记录
     c = Connector(
-        name="测试", connector_type="kingdee_erp", base_url="http://test",
-        auth_config={}, enabled=True,
+        name="测试",
+        connector_type="kingdee_erp",
+        base_url="http://test",
+        auth_config={},
+        enabled=True,
     )
     db_session.add(c)
     db_session.flush()
@@ -111,3 +111,84 @@ def test_full_pull_sync(executor, mock_connector, mock_mappings, db_session):
     assert logs[0].status == "success"
     assert logs[0].total_records == 2
     assert logs[0].success_count == 2
+
+
+def test_source_data_id_populated_in_unified_records(
+    executor, mock_connector, mock_mappings, db_session
+):
+    from src.models.connector import Connector
+    from src.models.unified import UnifiedOrder
+    from src.models.raw_data import RawData
+
+    c = Connector(
+        name="测试溯源",
+        connector_type="kingdee_erp",
+        base_url="http://test",
+        auth_config={},
+        enabled=True,
+    )
+    db_session.add(c)
+    db_session.flush()
+
+    result = executor.execute_pull(
+        connector=mock_connector,
+        connector_id=c.id,
+        entity="sales_order",
+        target_table="unified_orders",
+        mappings=mock_mappings,
+        session=db_session,
+        since=None,
+    )
+
+    assert result["status"] == "success"
+
+    raw_records = db_session.query(RawData).filter_by(connector_id=c.id).all()
+    assert len(raw_records) == 2
+
+    orders = db_session.query(UnifiedOrder).filter_by(source_system="kingdee_erp").all()
+    assert len(orders) == 2
+    raw_ids = {r.id for r in raw_records}
+    for order in orders:
+        assert order.source_data_id is not None, f"Order {order.external_id} missing source_data_id"
+        assert order.source_data_id in raw_ids
+
+
+def test_execute_pull_upsert_updates_existing(executor, mock_connector, mock_mappings, db_session):
+    from src.models.connector import Connector
+    from src.models.unified import UnifiedOrder
+
+    c = Connector(
+        name="测试更新",
+        connector_type="kingdee_erp",
+        base_url="http://test",
+        auth_config={},
+        enabled=True,
+    )
+    db_session.add(c)
+    db_session.flush()
+
+    result1 = executor.execute_pull(
+        connector=mock_connector,
+        connector_id=c.id,
+        entity="sales_order",
+        target_table="unified_orders",
+        mappings=mock_mappings,
+        session=db_session,
+        since=None,
+    )
+    assert result1["status"] == "success"
+    assert result1["total_records"] == 2
+
+    result2 = executor.execute_pull(
+        connector=mock_connector,
+        connector_id=c.id,
+        entity="sales_order",
+        target_table="unified_orders",
+        mappings=mock_mappings,
+        session=db_session,
+        since=None,
+    )
+    assert result2["status"] == "success"
+
+    orders = db_session.query(UnifiedOrder).filter_by(source_system="kingdee_erp").all()
+    assert len(orders) == 2

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # API
     API_V1_PREFIX: str = "/api/v1"
     API_KEY: str = ""
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:8000"]
 
     # 安全
     ENCRYPTION_KEY: str = ""

@@ -1,12 +1,9 @@
 # tests/test_connector_kingdee_plm.py
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.connectors.kingdee_plm import KingdeePLMConnector
-from src.connectors.base import (
-    HealthStatus, EntityInfo, PushResult,
-    ConnectorPullError, ConnectorPushError, connector_registry,
-)
+from src.connectors.base import ConnectorPullError, connector_registry
 
 
 @pytest.fixture
@@ -134,3 +131,24 @@ def test_kingdee_plm_push_partial_failure(connector):
         assert len(result.failures) == 1
         assert result.failures[0]["record"] == "P-002"
         assert "Duplicate key error" in result.failures[0]["error"]
+
+
+def test_sanitize_filter_value_accepts_safe_value(connector):
+    assert connector._sanitize_filter_value("2026-01-01 00:00:00") == "2026-01-01 00:00:00"
+    assert connector._sanitize_filter_value("SAL_SaleOrder") == "SAL_SaleOrder"
+    assert connector._sanitize_filter_value("test/path:value") == "test/path:value"
+
+
+def test_sanitize_filter_value_rejects_sql_injection(connector):
+    with pytest.raises(ConnectorPullError, match="Invalid filter value"):
+        connector._sanitize_filter_value("'; DROP TABLE --")
+
+
+def test_sanitize_filter_value_rejects_single_quotes(connector):
+    with pytest.raises(ConnectorPullError, match="Invalid filter value"):
+        connector._sanitize_filter_value("test'value")
+
+
+def test_sanitize_filter_value_rejects_parentheses(connector):
+    with pytest.raises(ConnectorPullError, match="Invalid filter value"):
+        connector._sanitize_filter_value("test()")

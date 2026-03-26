@@ -18,6 +18,7 @@ from src.connectors.base import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE_SIZE = 100
+MAX_PAGES = 1000
 
 # 纷享销客支持的实体及对应 API 路径
 FXIAOKE_ENTITIES = {
@@ -58,7 +59,7 @@ RETRY_BACKOFF = [1, 2, 4]
 @register_connector("fenxiangxiaoke")
 class FenxiangxiaokeConnector(BaseConnector):
     """纷享销客CRM连接器
-    
+
     使用 corpAccessToken 认证，通过 /cgi/corpAccessToken/get/V2 获取。
     支持客户、联系人、商机、合同等实体的读写操作。
     """
@@ -112,9 +113,7 @@ class FenxiangxiaokeConnector(BaseConnector):
             return HealthStatus(status="healthy", latency_ms=round(latency, 2))
         except Exception as e:
             latency = (time.time() - start) * 1000
-            return HealthStatus(
-                status="unhealthy", latency_ms=round(latency, 2), error=str(e)
-            )
+            return HealthStatus(status="unhealthy", latency_ms=round(latency, 2), error=str(e))
 
     def list_entities(self) -> list[EntityInfo]:
         """列出支持的实体"""
@@ -130,15 +129,15 @@ class FenxiangxiaokeConnector(BaseConnector):
         filters: dict | None = None,
     ) -> list[dict]:
         """拉取纷享销客实体数据
-        
+
         Args:
             entity: 实体类型 (customer/contact/opportunity/contract)
             since: 增量同步起始时间
             filters: 额外过滤参数
-            
+
         Returns:
             记录列表
-            
+
         Raises:
             ConnectorPullError: 拉取失败时抛出
         """
@@ -154,6 +153,10 @@ class FenxiangxiaokeConnector(BaseConnector):
 
         try:
             while True:
+                if page_number > MAX_PAGES:
+                    logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
+                    break
+
                 payload = {
                     "corpAccessToken": self._token,
                     "corpId": self.config.get("corp_id", ""),
@@ -161,16 +164,16 @@ class FenxiangxiaokeConnector(BaseConnector):
                     "pageNumber": page_number,
                     "pageSize": DEFAULT_PAGE_SIZE,
                 }
-                
+
                 # 添加实体 API 名称（如果需要）
                 if "api_name" in entity_config:
                     payload["apiName"] = entity_config["api_name"]
-                
+
                 if filters:
                     payload.update(filters)
 
                 result = self._request("POST", url, json=payload)
-                
+
                 if result.get("errorCode") != 0:
                     error_msg = result.get("errorMessage", "未知错误")
                     raise ConnectorPullError(f"纷享销客 API 错误: {error_msg}")
@@ -194,13 +197,13 @@ class FenxiangxiaokeConnector(BaseConnector):
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
         """推送数据到纷享销客
-        
+
         纷享销客支持通过 API 创建实体数据。
-        
+
         Args:
             entity: 实体类型
             records: 要推送的记录列表
-            
+
         Returns:
             PushResult 包含成功和失败计数
         """
@@ -223,26 +226,30 @@ class FenxiangxiaokeConnector(BaseConnector):
                     "currentOpenUserId": self.config.get("open_user_id", ""),
                     "data": record,
                 }
-                
+
                 if "api_name" in entity_config:
                     payload["apiName"] = entity_config["api_name"]
 
                 result = self._request("POST", url, json=payload)
-                
+
                 if result.get("errorCode") == 0:
                     success_count += 1
                 else:
                     failure_count += 1
-                    failures.append({
-                        "record": record,
-                        "error": result.get("errorMessage", "未知错误"),
-                    })
+                    failures.append(
+                        {
+                            "record": record,
+                            "error": result.get("errorMessage", "未知错误"),
+                        }
+                    )
             except Exception as e:
                 failure_count += 1
-                failures.append({
-                    "record": record,
-                    "error": str(e),
-                })
+                failures.append(
+                    {
+                        "record": record,
+                        "error": str(e),
+                    }
+                )
 
         return PushResult(
             success_count=success_count,
@@ -254,9 +261,7 @@ class FenxiangxiaokeConnector(BaseConnector):
         """获取实体配置信息"""
         return FXIAOKE_ENTITIES.get(entity, {})
 
-    def _request(
-        self, method: str, url: str, skip_auth: bool = False, **kwargs
-    ) -> dict:
+    def _request(self, method: str, url: str, skip_auth: bool = False, **kwargs) -> dict:
         """带重试的 HTTP 请求"""
         headers = kwargs.pop("headers", {})
         headers["Content-Type"] = "application/json"

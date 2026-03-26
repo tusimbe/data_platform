@@ -1,5 +1,5 @@
 x-common-env: &common-env
-  DATABASE_URL: postgresql://dp_user:dp_pass@postgres:5432/data_platform
+  DATABASE_URL: postgresql://${POSTGRES_USER:-dp_user}:${POSTGRES_PASSWORD:-dp_pass}@postgres:5432/${POSTGRES_DB:-data_platform}
   REDIS_URL: redis://redis:6379/0
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:-default-dev-key}
   API_KEY: ${API_KEY:-default-dev-key}
@@ -8,9 +8,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: data_platform
-      POSTGRES_USER: dp_user
-      POSTGRES_PASSWORD: dp_pass
+      POSTGRES_DB: ${POSTGRES_DB:-data_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-dp_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dp_pass}
     ports:
       - "5432:5432"
     volumes:

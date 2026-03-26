@@ -1,5 +1,6 @@
 # src/tasks/sync_tasks.py
 """Celery 同步任务定义"""
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -37,7 +38,7 @@ def _entity_to_table(entity: str) -> str:
 
 @celery_app.task(
     name="sync.run_sync_task",
-    autoretry_for=(ConnectorError,),
+    autoretry_for=(ConnectorError, redis.ConnectionError, redis.TimeoutError),
     retry_backoff=True,
     retry_backoff_max=600,
     max_retries=settings.SYNC_TASK_MAX_RETRIES,
@@ -106,12 +107,17 @@ def run_sync_task(task_id: int):
             connector.connect()
             executor = SyncExecutor()
             target_table = _entity_to_table(task.entity)
+
+            # Read field mappings from task config
+            task_config = task.config or {}
+            mappings = task_config.get("mappings", [])
+
             result = executor.execute_pull(
                 connector=connector,
                 connector_id=connector_model.id,
                 entity=task.entity,
                 target_table=target_table,
-                mappings=[],
+                mappings=mappings,
                 session=session,
                 since=task.last_sync_at,
             )

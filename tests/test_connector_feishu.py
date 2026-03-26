@@ -1,13 +1,10 @@
 # tests/test_connector_feishu.py
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import time
 
 from src.connectors.feishu import FeishuConnector
-from src.connectors.base import (
-    HealthStatus, EntityInfo, PushResult,
-    ConnectorPullError, connector_registry,
-)
+from src.connectors.base import ConnectorPullError, connector_registry
 
 
 @pytest.fixture
@@ -65,7 +62,7 @@ def test_feishu_pull_success(connector):
                 {"user_id": "ou_001", "name": "张三", "department_id": "d001"},
                 {"user_id": "ou_002", "name": "李四", "department_id": "d001"},
             ]
-        }
+        },
     }
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = mock_response
@@ -98,6 +95,7 @@ def test_feishu_connect_gets_token(connector):
 
 
 # Additional tests based on Task 1 feedback
+
 
 def test_feishu_pull_invalid_entity_raises_error(connector):
     """拉取不支持的实体类型应抛出 ConnectorPullError"""
@@ -138,7 +136,7 @@ def test_feishu_pull_pagination(connector):
                 {"user_id": "ou_002", "name": "李四"},
             ],
             "page_token": "next_page_token_123",
-        }
+        },
     }
     page2_response = {
         "code": 0,
@@ -147,7 +145,7 @@ def test_feishu_pull_pagination(connector):
                 {"user_id": "ou_003", "name": "王五"},
             ],
             # 没有 page_token 表示最后一页
-        }
+        },
     }
 
     with patch.object(connector, "_request") as mock_req:
@@ -164,3 +162,28 @@ def test_feishu_pull_pagination(connector):
         assert mock_req.call_count == 2
         second_call_params = mock_req.call_args_list[1][1]["params"]
         assert second_call_params.get("page_token") == "next_page_token_123"
+
+
+def test_feishu_pull_max_pages_cap(connector):
+    from src.connectors.feishu import MAX_PAGES
+
+    call_count = 0
+
+    def mock_request(method, url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return {
+            "code": 0,
+            "data": {
+                "items": [{"id": f"emp-{call_count}"}],
+                "page_token": f"token_{call_count}",
+            },
+        }
+
+    connector._token = "test-token"
+    connector._token_expires_at = __import__("time").time() + 7200
+    with patch.object(connector, "_request", side_effect=mock_request):
+        records = connector.pull(entity="employee")
+
+    assert call_count == MAX_PAGES
+    assert len(records) == MAX_PAGES

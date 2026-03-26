@@ -1,5 +1,6 @@
 # src/services/connector_service.py
 """连接器管理服务：CRUD + 凭证加密 + 软删除级联"""
+
 import json
 
 from fastapi import HTTPException
@@ -16,10 +17,12 @@ from src.models.sync import SyncTask
 def _encrypt_auth_config(auth_config: dict) -> dict:
     """加密 auth_config，返回包含密文的字典"""
     settings = get_settings()
-    if auth_config and settings.ENCRYPTION_KEY:
-        encrypted = encrypt_value(json.dumps(auth_config), settings.ENCRYPTION_KEY)
-        return {"_encrypted": encrypted}
-    return auth_config
+    if not auth_config:
+        return auth_config
+    if not settings.ENCRYPTION_KEY:
+        raise ValueError("ENCRYPTION_KEY must be configured to store connector credentials")
+    encrypted = encrypt_value(json.dumps(auth_config), settings.ENCRYPTION_KEY)
+    return {"_encrypted": encrypted}
 
 
 def list_connectors(session: Session, params: PaginationParams) -> dict:
@@ -49,7 +52,9 @@ def create_connector(session: Session, data: dict) -> Connector:
     # 检查名称唯一性
     existing = session.query(Connector).filter_by(name=data["name"]).first()
     if existing:
-        raise HTTPException(status_code=409, detail=f"Connector name '{data['name']}' already exists")
+        raise HTTPException(
+            status_code=409, detail=f"Connector name '{data['name']}' already exists"
+        )
 
     # 加密 auth_config
     auth_config = _encrypt_auth_config(data.get("auth_config", {}))
@@ -83,7 +88,9 @@ def update_connector(session: Session, connector_id: int, data: dict) -> Connect
     if "name" in data and data["name"] is not None and data["name"] != connector.name:
         existing = session.query(Connector).filter_by(name=data["name"]).first()
         if existing:
-            raise HTTPException(status_code=409, detail=f"Connector name '{data['name']}' already exists")
+            raise HTTPException(
+                status_code=409, detail=f"Connector name '{data['name']}' already exists"
+            )
 
     for key, value in data.items():
         if value is None:

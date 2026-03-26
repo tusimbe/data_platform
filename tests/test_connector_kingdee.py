@@ -1,13 +1,9 @@
 # tests/test_connector_kingdee.py
 import pytest
-from unittest.mock import patch, MagicMock
-from datetime import datetime
+from unittest.mock import patch
 
 from src.connectors.kingdee_erp import KingdeeERPConnector
-from src.connectors.base import (
-    HealthStatus, EntityInfo, PushResult,
-    ConnectorPullError, connector_registry,
-)
+from src.connectors.base import ConnectorPullError, connector_registry
 
 
 @pytest.fixture
@@ -88,3 +84,63 @@ def test_kingdee_connect_gets_token(connector):
         }
         connector.connect()
         assert connector._token == "mock-token-123"
+
+
+def test_sanitize_filter_value_accepts_safe_value(connector):
+    assert connector._sanitize_filter_value("2026-01-01 00:00:00") == "2026-01-01 00:00:00"
+    assert connector._sanitize_filter_value("SAL_SaleOrder") == "SAL_SaleOrder"
+    assert connector._sanitize_filter_value("test/path:value") == "test/path:value"
+
+
+def test_sanitize_filter_value_rejects_sql_injection(connector):
+    with pytest.raises(ConnectorPullError, match="Invalid filter value"):
+        connector._sanitize_filter_value("'; DROP TABLE --")
+
+
+def test_sanitize_filter_value_rejects_single_quotes(connector):
+    with pytest.raises(ConnectorPullError, match="Invalid filter value"):
+        connector._sanitize_filter_value("test'value")
+
+
+def test_sanitize_filter_value_rejects_parentheses(connector):
+    with pytest.raises(ConnectorPullError, match="Invalid filter value"):
+        connector._sanitize_filter_value("test()")
+
+
+def test_kingdee_pull_max_pages_cap(connector):
+    from src.connectors.kingdee_erp import MAX_PAGES
+
+    full_page = [{"FBillNo": f"SO-{i}"} for i in range(2000)]
+
+    call_count = 0
+
+    def mock_request(method, url, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return full_page
+
+    with patch.object(connector, "_request", side_effect=mock_request):
+        records = connector.pull(entity="sales_order")
+
+    assert call_count == MAX_PAGES
+    assert len(records) == MAX_PAGES * 2000
+
+
+def test_kingdee_pull_multi_page(connector):
+    page1 = [{"FBillNo": f"SO-{i}"} for i in range(2000)]
+    page2 = [{"FBillNo": f"SO-{i}"} for i in range(2000, 2500)]
+
+    pages = [page1, page2]
+    call_idx = 0
+
+    def mock_request(method, url, **kwargs):
+        nonlocal call_idx
+        result = pages[call_idx]
+        call_idx += 1
+        return result
+
+    with patch.object(connector, "_request", side_effect=mock_request):
+        records = connector.pull(entity="sales_order")
+
+    assert call_idx == 2
+    assert len(records) == 2500
