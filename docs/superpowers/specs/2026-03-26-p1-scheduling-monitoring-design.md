@@ -343,8 +343,8 @@ def run_sync_task(self, task_id: int):
                 )
                 # 更新状态
                 sync_log.status = "success"
-                sync_log.total_records = result.get("total", 0)
-                sync_log.success_count = result.get("stored", 0)
+                sync_log.total_records = result.get("total_records", 0)
+                sync_log.success_count = result.get("success_count", 0)
                 sync_log.finished_at = datetime.now(timezone.utc)
                 task.last_sync_at = datetime.now(timezone.utc)
             else:
