@@ -10,6 +10,7 @@ from src.services.flow_service import (
     MAX_RETRIES_PER_STEP,
     STEP_HANDLERS,
     StepResult,
+    _query_instance_for_update,
     advance_flow,
     cancel_instance,
     check_step_timeout,
@@ -34,6 +35,10 @@ def _waiting_handler(context, db):
 
 def _failed_handler(context, db):
     return StepResult(status="failed", error="test error")
+
+
+def _cancelled_handler(context, db):
+    return StepResult(status="cancelled", error="Approval REJECTED")
 
 
 def _make_definition(db_session, name="flow_a", steps=None):
@@ -338,6 +343,52 @@ class TestAdvanceFlowStateMachine:
         assert refreshed.status == "waiting"
         assert refreshed.current_step == 1
 
+    def test_advance_flow_cancelled_result(self, db_session):
+        definition = _make_definition(
+            db_session,
+            name="adv_cancelled",
+            steps=[{"name": "s1", "action": "cancel_action"}],
+        )
+        instance = create_instance(db_session, definition.id)
+
+        with patch.dict(STEP_HANDLERS, {"cancel_action": _cancelled_handler}):
+            result = advance_flow(instance.id, db_session)
+
+        refreshed = get_instance(db_session, instance.id)
+        assert result["status"] == "cancelled"
+        assert result["reason"] == "Approval REJECTED"
+        assert refreshed.status == "cancelled"
+        assert refreshed.error_message == "Approval REJECTED"
+        assert refreshed.completed_at is not None
+
+    def test_advance_flow_logs_warning_when_context_exceeds_threshold(self, db_session):
+        definition = _make_definition(
+            db_session,
+            name="adv_context_warning",
+            steps=[{"name": "s1", "action": "large_context_action"}],
+        )
+        instance = create_instance(
+            db_session,
+            definition.id,
+            context={"existing": "x" * 1_000_100},
+        )
+
+        with patch.dict(
+            STEP_HANDLERS,
+            {
+                "large_context_action": lambda context, db: StepResult(
+                    status="completed",
+                    data={"more": "y"},
+                )
+            },
+        ):
+            with patch("src.services.flow_service.logger") as mock_logger:
+                advance_flow(instance.id, db_session)
+
+        assert mock_logger.warning.called
+        warning_call_args = mock_logger.warning.call_args[0][0]
+        assert "exceeds 1MB warning threshold" in warning_call_args
+
 
 class TestFlowTimeoutAndLifecycle:
     def test_check_step_timeout_not_expired(self, db_session):
@@ -401,3 +452,14 @@ class TestFlowTimeoutAndLifecycle:
 
         with pytest.raises(ValidationError):
             cancel_instance(db_session, instance.id)
+
+
+class TestFlowQueryInstanceForUpdate:
+    def test_query_instance_for_update_returns_instance_on_sqlite(self, db_session):
+        definition = _make_definition(db_session, name="query_for_update")
+        instance = create_instance(db_session, definition.id)
+
+        queried = _query_instance_for_update(db_session, instance.id)
+
+        assert queried is not None
+        assert queried.id == instance.id

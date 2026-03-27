@@ -3,44 +3,17 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from src.connectors.base import ConnectorError, connector_registry
-from src.core.config import get_settings
-from src.core.security import decrypt_value
-from src.models.connector import Connector
+from src.services.connector_utils import get_connector_instance
 from src.services.flow_service import StepResult
 
 logger = logging.getLogger(__name__)
-
-
-def _get_connector_instance(connector_type: str, db: Session):
-    connector_model = (
-        db.query(Connector).filter_by(connector_type=connector_type, enabled=True).first()
-    )
-    if not connector_model:
-        raise ConnectorError(f"No enabled connector for type: {connector_type}")
-
-    connector_class = connector_registry.get(connector_type)
-    auth_config = connector_model.auth_config
-
-    settings = get_settings()
-    if isinstance(auth_config, dict) and "_encrypted" in auth_config:
-        decrypted = decrypt_value(auth_config["_encrypted"], settings.ENCRYPTION_KEY)
-        auth_config = json.loads(decrypted)
-
-    config = {"base_url": connector_model.base_url}
-    if isinstance(auth_config, dict):
-        config.update(auth_config)
-
-    connector = connector_class(config)
-    connector.connect()
-    return connector
 
 
 def create_feishu_approval_handler(context: dict, db: Session) -> StepResult:
     logger.info("Executing create_feishu_approval_handler")
     connector = None
     try:
-        connector = _get_connector_instance("feishu", db)
+        connector = get_connector_instance("feishu", db)
         approval_code = connector.config.get("approval_code", "")
         open_id = context.get("applicant_open_id") or connector.config.get("open_user_id", "")
         return_request = context.get("return_request", {})
@@ -75,7 +48,7 @@ def poll_feishu_approval_handler(context: dict, db: Session) -> StepResult:
     logger.info("Executing poll_feishu_approval_handler: approval_instance_code=%s", instance_code)
     connector = None
     try:
-        connector = _get_connector_instance("feishu", db)
+        connector = get_connector_instance("feishu", db)
         result = connector.get_approval_instance(instance_code)
         status = result.get("status", "PENDING")
         logger.info("poll_feishu_approval_handler: status=%s", status)
@@ -86,7 +59,7 @@ def poll_feishu_approval_handler(context: dict, db: Session) -> StepResult:
                 data={"approval_status": "APPROVED", "approval_data": result},
             )
         if status in ("REJECTED", "CANCELED"):
-            return StepResult(status="failed", error=f"Approval {status}")
+            return StepResult(status="cancelled", error=f"Approval {status}")
         return StepResult(status="waiting")
     except Exception as e:
         logger.exception("poll_feishu_approval_handler failed: %s", e)
@@ -108,7 +81,30 @@ def create_erp_return_order_handler(context: dict, db: Session) -> StepResult:
     )
     connector = None
     try:
-        connector = _get_connector_instance("kingdee_erp", db)
+        connector = get_connector_instance("kingdee_erp", db)
+        existing_bill_id = context.get("return_order_bill_id")
+        existing_bill_no = context.get("return_order_bill_no")
+        if existing_bill_id:
+            logger.info(
+                "Resuming create_erp_return_order_handler: bill_id=%s already exists, skipping Save",
+                existing_bill_id,
+            )
+            try:
+                connector.submit("SAL_RETURNSTOCK", existing_bill_id, existing_bill_no)
+            except Exception as e:
+                logger.warning("Submit (resume) failed: %s, attempting audit", e)
+            try:
+                connector.audit("SAL_RETURNSTOCK", existing_bill_id, existing_bill_no)
+            except Exception as e:
+                logger.warning("Audit (resume) failed: %s", e)
+            return StepResult(
+                status="completed",
+                data={
+                    "return_order_bill_no": existing_bill_no,
+                    "return_order_bill_id": existing_bill_id,
+                },
+            )
+
         model = {
             "FBillTypeID": {"FNumber": "XSTHD01_SYS"},
             "FReturnDate": return_request.get("return_date", ""),
@@ -141,7 +137,30 @@ def create_erp_negative_receivable_handler(context: dict, db: Session) -> StepRe
     )
     connector = None
     try:
-        connector = _get_connector_instance("kingdee_erp", db)
+        connector = get_connector_instance("kingdee_erp", db)
+        existing_bill_id = context.get("receivable_bill_id")
+        existing_bill_no = context.get("receivable_bill_no")
+        if existing_bill_id:
+            logger.info(
+                "Resuming create_erp_negative_receivable_handler: bill_id=%s already exists, skipping Save",
+                existing_bill_id,
+            )
+            try:
+                connector.submit("AR_RECEIVABLE", existing_bill_id, existing_bill_no)
+            except Exception as e:
+                logger.warning("Submit (resume) failed: %s, attempting audit", e)
+            try:
+                connector.audit("AR_RECEIVABLE", existing_bill_id, existing_bill_no)
+            except Exception as e:
+                logger.warning("Audit (resume) failed: %s", e)
+            return StepResult(
+                status="completed",
+                data={
+                    "receivable_bill_no": existing_bill_no,
+                    "receivable_bill_id": existing_bill_id,
+                },
+            )
+
         model = {
             "FBillTypeID": {"FNumber": "YSD01_SYS"},
             "FCustId": {"FNumber": context.get("return_request", {}).get("customer_code", "")},
@@ -175,7 +194,27 @@ def create_erp_refund_bill_handler(context: dict, db: Session) -> StepResult:
     )
     connector = None
     try:
-        connector = _get_connector_instance("kingdee_erp", db)
+        connector = get_connector_instance("kingdee_erp", db)
+        existing_bill_id = context.get("refund_bill_id")
+        existing_bill_no = context.get("refund_bill_no")
+        if existing_bill_id:
+            logger.info(
+                "Resuming create_erp_refund_bill_handler: bill_id=%s already exists, skipping Save",
+                existing_bill_id,
+            )
+            try:
+                connector.submit("AR_REFUNDBILL", existing_bill_id, existing_bill_no)
+            except Exception as e:
+                logger.warning("Submit (resume) failed: %s, attempting audit", e)
+            try:
+                connector.audit("AR_REFUNDBILL", existing_bill_id, existing_bill_no)
+            except Exception as e:
+                logger.warning("Audit (resume) failed: %s", e)
+            return StepResult(
+                status="completed",
+                data={"refund_bill_no": existing_bill_no, "refund_bill_id": existing_bill_id},
+            )
+
         model = {
             "FBillTypeID": {"FNumber": "SKTKD01_SYS"},
             "FCustId": {"FNumber": context.get("return_request", {}).get("customer_code", "")},
@@ -209,7 +248,7 @@ def notify_finance_handler(context: dict, db: Session) -> StepResult:
     )
     connector = None
     try:
-        connector = _get_connector_instance("feishu", db)
+        connector = get_connector_instance("feishu", db)
         receive_id = context.get("finance_notify_id") or connector.config.get(
             "finance_notify_id", ""
         )
@@ -257,7 +296,7 @@ def notify_sales_handler(context: dict, db: Session) -> StepResult:
     )
     connector = None
     try:
-        connector = _get_connector_instance("feishu", db)
+        connector = get_connector_instance("feishu", db)
         receive_id = context.get("sales_notify_id") or context.get("applicant_open_id", "")
         if not receive_id:
             logger.warning("notify_sales_handler: no sales recipient found, skip sending")

@@ -1,4 +1,5 @@
 import logging
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Callable
@@ -32,8 +33,16 @@ def check_step_timeout(instance: FlowInstance, step: dict) -> bool:
     return elapsed > timeout_minutes
 
 
+def _query_instance_for_update(db: Session, instance_id: int) -> FlowInstance | None:
+    query = db.query(FlowInstance).filter_by(id=instance_id)
+    dialect_name = db.bind.dialect.name if db.bind else ""
+    if dialect_name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    return query.first()
+
+
 def advance_flow(instance_id: int, db: Session) -> dict:
-    instance = db.query(FlowInstance).filter_by(id=instance_id).first()
+    instance = _query_instance_for_update(db, instance_id)
     if not instance:
         raise NotFoundError(f"Flow instance {instance_id} not found")
 
@@ -73,6 +82,14 @@ def advance_flow(instance_id: int, db: Session) -> dict:
 
     if result.status == "completed":
         new_context = {**instance.context, **result.data}
+        try:
+            context_size = len(json.dumps(new_context))
+            if context_size > 1_000_000:
+                logger.warning(
+                    f"Flow {instance_id} context size {context_size} bytes exceeds 1MB warning threshold"
+                )
+        except (TypeError, ValueError):
+            pass
         instance.context = new_context
         instance.retry_count = 0
         instance.current_step += 1
@@ -94,6 +111,14 @@ def advance_flow(instance_id: int, db: Session) -> dict:
         instance.status = "waiting"
         db.flush()
         return {"status": "waiting", "current_step": instance.current_step}
+
+    if result.status == "cancelled":
+        instance.status = "cancelled"
+        instance.error_message = result.error
+        instance.completed_at = datetime.now(timezone.utc)
+        db.flush()
+        logger.info(f"Flow {instance_id} cancelled at step {step['name']}: {result.error}")
+        return {"status": "cancelled", "reason": result.error}
 
     if result.status == "failed":
         instance.retry_count += 1
