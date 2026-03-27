@@ -23,9 +23,12 @@ def create_feishu_approval_handler(context: dict, db: Session) -> StepResult:
             bool(return_request),
         )
 
-        form_data = [
+        # Use pre-built form_data from context if available (widget-level format),
+        # otherwise fall back to generic wrapper.
+        form_data = context.get("form_data") or [
             {
-                "name": "退货申请数据",
+                "id": "widget17097041122290001",
+                "type": "input",
                 "value": json.dumps(return_request, ensure_ascii=False),
             }
         ]

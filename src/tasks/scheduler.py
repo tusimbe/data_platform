@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+BUILTIN_PERIODIC_TASKS = [
+    {
+        "name": "flow_poll_waiting",
+        "task": "flow.poll_waiting_flows",
+        "cron": "*/2 * * * *",
+    },
+    {
+        "name": "flow_poll_crm_returns",
+        "task": "flow.poll_crm_returns",
+        "cron": "*/5 * * * *",
+    },
+]
+
+
 class DatabaseScheduler(Scheduler):
     """从 SyncTask 表动态加载调度的 Celery Beat Scheduler。
 
@@ -34,6 +48,31 @@ class DatabaseScheduler(Scheduler):
         """Beat 启动时从 DB 加载全部活跃任务"""
         self._sync_from_db()
 
+    def _build_builtin_entries(self):
+        entries = {}
+        for bt in BUILTIN_PERIODIC_TASKS:
+            parts = bt["cron"].split()
+            if len(parts) != 5:
+                continue
+            schedule = crontab(
+                minute=parts[0],
+                hour=parts[1],
+                day_of_month=parts[2],
+                month_of_year=parts[3],
+                day_of_week=parts[4],
+            )
+            entry = ScheduleEntry(
+                name=bt["name"],
+                task=bt["task"],
+                schedule=schedule,
+                args=bt.get("args", ()),
+                app=self.app,
+            )
+            if bt["name"] in self._schedule:
+                entry.last_run_at = self._schedule[bt["name"]].last_run_at
+            entries[bt["name"]] = entry
+        return entries
+
     def _sync_from_db(self):
         """查询 SyncTask 表，重建内存调度表"""
         SessionLocal = get_session_local()
@@ -48,7 +87,7 @@ class DatabaseScheduler(Scheduler):
                 .all()
             )
 
-            new_schedule = {}
+            new_schedule = self._build_builtin_entries()
             for task in tasks:
                 entry_name = f"sync_task_{task.id}"
                 parts = task.cron_expression.split()
