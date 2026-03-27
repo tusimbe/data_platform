@@ -1,5 +1,6 @@
 # src/core/celery_app.py
 """Celery 应用实例"""
+
 from celery import Celery
 from src.core.config import get_settings
 
@@ -17,4 +18,4 @@ celery_app.conf.update(
     task_track_started=True,
     worker_hijack_root_logger=False,
 )
-celery_app.autodiscover_tasks(["src.tasks"])
+celery_app.conf.update(include=["src.tasks.sync_tasks"])

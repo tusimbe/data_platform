@@ -79,10 +79,12 @@ def test_fenxiangxiaoke_pull_success(connector):
 
     mock_response = {
         "errorCode": 0,
-        "dataList": [
-            {"_id": "cust_001", "name": "客户A", "industry": "IT"},
-            {"_id": "cust_002", "name": "客户B", "industry": "金融"},
-        ],
+        "data": {
+            "dataList": [
+                {"_id": "cust_001", "name": "客户A", "industry": "IT", "total_num": 2},
+                {"_id": "cust_002", "name": "客户B", "industry": "金融", "total_num": 2},
+            ],
+        },
     }
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = mock_response
@@ -180,37 +182,35 @@ def test_fenxiangxiaoke_pull_pagination(connector):
     # 模拟分页响应：第一页有更多数据，第二页是最后一页
     page1_response = {
         "errorCode": 0,
-        "dataList": [
-            {"_id": "cust_001", "name": "客户A"},
-            {"_id": "cust_002", "name": "客户B"},
-        ],
-        "hasMore": True,
-        "totalCount": 3,
+        "data": {
+            "dataList": [
+                {"_id": "cust_001", "name": "客户A", "total_num": 3},
+                {"_id": "cust_002", "name": "客户B", "total_num": 3},
+            ],
+        },
     }
     page2_response = {
         "errorCode": 0,
-        "dataList": [
-            {"_id": "cust_003", "name": "客户C"},
-        ],
-        "hasMore": False,
+        "data": {
+            "dataList": [
+                {"_id": "cust_003", "name": "客户C", "total_num": 3},
+            ],
+        },
     }
 
     with patch.object(connector, "_request") as mock_req:
         mock_req.side_effect = [page1_response, page2_response]
         records = connector.pull(entity="customer")
 
-        # 应该合并两页的数据
         assert len(records) == 3
         assert records[0]["_id"] == "cust_001"
         assert records[1]["_id"] == "cust_002"
         assert records[2]["_id"] == "cust_003"
 
-        # 验证分页请求
         assert mock_req.call_count == 2
-        # 第二次请求应包含 pageNumber=2
         second_call_kwargs = mock_req.call_args_list[1][1]
         if "json" in second_call_kwargs:
-            assert second_call_kwargs["json"].get("pageNumber") == 2
+            assert second_call_kwargs["json"]["data"]["search_query_info"]["offset"] == 2
 
 
 def test_fenxiangxiaoke_disconnect(connector):
@@ -227,7 +227,8 @@ def test_fenxiangxiaoke_disconnect(connector):
 def test_fenxiangxiaoke_get_schema(connector):
     """get_schema() 应返回实体配置信息"""
     schema = connector.get_schema("customer")
-    assert "path" in schema or "description" in schema
+    assert "description" in schema
+    assert "api_name" in schema
 
     # 不存在的实体应返回空字典
     empty_schema = connector.get_schema("nonexistent")

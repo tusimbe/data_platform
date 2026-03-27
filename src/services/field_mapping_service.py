@@ -7,8 +7,27 @@ logger = logging.getLogger(__name__)
 class FieldMappingService:
     """字段映射转换服务：在外部系统字段和统一模型字段之间进行转换"""
 
-    def apply_mappings(self, source: dict, mappings: list[dict]) -> dict:
-        """正向映射：外部系统字段 → 统一模型字段"""
+    def apply_mappings(
+        self,
+        source: dict,
+        mappings: list[dict],
+        target_model=None,
+    ) -> dict:
+        """正向映射：外部系统字段 → 统一模型字段
+
+        当 mappings 为空且提供了 target_model 时，自动将源数据中与
+        目标模型列名匹配的字段直接透传（auto-passthrough）。
+        """
+        if mappings:
+            return self._apply_explicit_mappings(source, mappings)
+
+        if target_model is not None:
+            return self._auto_passthrough(source, target_model)
+
+        return {}
+
+    def _apply_explicit_mappings(self, source: dict, mappings: list[dict]) -> dict:
+        """使用显式映射规则转换字段"""
         result = {}
         for m in mappings:
             source_field = m["source_field"]
@@ -19,11 +38,37 @@ class FieldMappingService:
             raw_value = source.get(source_field)
 
             if transform and raw_value is not None:
-                raw_value = self._apply_transform(
-                    raw_value, transform, transform_config, source
-                )
+                raw_value = self._apply_transform(raw_value, transform, transform_config, source)
 
             result[target_field] = raw_value
+
+        return result
+
+    @staticmethod
+    def _auto_passthrough(source: dict, target_model) -> dict:
+        """自动透传：将源字段中与目标模型列名匹配的字段直接映射。
+
+        跳过系统管理的列（id, source_system, external_id 等），
+        只映射业务字段。
+        """
+        SYSTEM_COLUMNS = {
+            "id",
+            "source_system",
+            "external_id",
+            "source_data_id",
+            "synced_at",
+            "created_at",
+            "updated_at",
+        }
+        valid_cols = {c.name for c in target_model.__table__.columns} - SYSTEM_COLUMNS
+
+        result = {}
+        for col in valid_cols:
+            if col in source:
+                value = source[col]
+                # 跳过嵌套对象/列表 — 只透传标量值
+                if not isinstance(value, (dict, list)):
+                    result[col] = value
 
         return result
 
@@ -38,9 +83,7 @@ class FieldMappingService:
                 result[source_field] = value
         return result
 
-    def _apply_transform(
-        self, value, transform: str, config: dict, source: dict
-    ):
+    def _apply_transform(self, value, transform: str, config: dict, source: dict):
         """应用转换规则"""
         if transform == "date_format":
             return self._transform_date_format(value, config)

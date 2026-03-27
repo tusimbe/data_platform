@@ -32,15 +32,22 @@ class SyncExecutor:
         self,
         raw_records: list[dict],
         mappings: list[dict],
+        target_table: str | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """阶段2：应用字段映射转换数据。返回 (成功列表, 错误列表)"""
         transformed = []
         errors = []
 
+        target_model = get_entity_model(target_table) if target_table else None
+
         for record in raw_records:
             try:
-                mapped = self._mapping_service.apply_mappings(record, mappings)
-                mapped["_raw"] = record  # 保留原始数据引用
+                mapped = self._mapping_service.apply_mappings(
+                    record,
+                    mappings,
+                    target_model=target_model,
+                )
+                mapped["_raw"] = record
                 transformed.append(mapped)
             except Exception as e:
                 errors.append(
@@ -227,7 +234,7 @@ class SyncExecutor:
             }
 
         # 阶段2：转换
-        transformed, errors = self.transform_phase(raw_records, mappings)
+        transformed, errors = self.transform_phase(raw_records, mappings, target_table)
 
         # 创建 sync_log 记录
         log = SyncLog(
@@ -295,7 +302,7 @@ class SyncExecutor:
         value = record.get(id_field)
         if value is not None:
             return str(value)
-        for key in ["id", "Id", "ID"]:
+        for key in ["id", "Id", "ID", "_id"]:
             if key in record:
                 return str(record[key])
         return None

@@ -21,33 +21,25 @@ DEFAULT_PAGE_SIZE = 100
 MAX_PAGES = 1000
 
 # 纷享销客支持的实体及对应 API 路径
+# 使用 CRM v2 data/query 统一查询接口
+FXIAOKE_QUERY_PATH = "/cgi/crm/v2/data/query"
+FXIAOKE_CREATE_PATH = "/cgi/crm/v2/data/create"
+
 FXIAOKE_ENTITIES = {
     "customer": {
-        "path": "/cgi/crm/custom/v2/list",
-        "create_path": "/cgi/crm/custom/v2/data/create",
         "description": "客户",
-        "list_key": "dataList",
         "api_name": "AccountObj",
     },
     "contact": {
-        "path": "/cgi/crm/contact/list",
-        "create_path": "/cgi/crm/contact/create",
         "description": "联系人",
-        "list_key": "dataList",
         "api_name": "ContactObj",
     },
     "opportunity": {
-        "path": "/cgi/crm/opportunity/list",
-        "create_path": "/cgi/crm/opportunity/create",
         "description": "商机",
-        "list_key": "dataList",
         "api_name": "OpportunityObj",
     },
     "contract": {
-        "path": "/cgi/crm/contract/list",
-        "create_path": "/cgi/crm/contract/create",
         "description": "合同",
-        "list_key": "dataList",
         "api_name": "ContractObj",
     },
 }
@@ -145,47 +137,51 @@ class FenxiangxiaokeConnector(BaseConnector):
 
         self._ensure_token()
         entity_config = FXIAOKE_ENTITIES[entity]
-        url = f"{self.config['base_url']}{entity_config['path']}"
+        url = f"{self.config['base_url']}{FXIAOKE_QUERY_PATH}"
 
         all_records = []
-        page_number = 1
+        offset = 0
 
         try:
             while True:
-                if page_number > MAX_PAGES:
+                if offset // DEFAULT_PAGE_SIZE > MAX_PAGES:
                     logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
                     break
+
+                search_filters = []
+                if filters and "filters" in filters:
+                    search_filters.extend(filters["filters"])
 
                 payload = {
                     "corpAccessToken": self._token,
                     "corpId": self.config.get("corp_id", ""),
                     "currentOpenUserId": self.config.get("open_user_id", ""),
-                    "pageNumber": page_number,
-                    "pageSize": DEFAULT_PAGE_SIZE,
+                    "data": {
+                        "dataObjectApiName": entity_config["api_name"],
+                        "search_query_info": {
+                            "limit": DEFAULT_PAGE_SIZE,
+                            "offset": offset,
+                            "filters": search_filters,
+                            "orders": [],
+                        },
+                    },
                 }
-
-                # 添加实体 API 名称（如果需要）
-                if "api_name" in entity_config:
-                    payload["apiName"] = entity_config["api_name"]
-
-                if filters:
-                    payload.update(filters)
 
                 result = self._request("POST", url, json=payload)
 
-                if result.get("errorCode") != 0:
+                data = result.get("data", {})
+                if isinstance(result.get("errorCode"), int) and result["errorCode"] != 0:
                     error_msg = result.get("errorMessage", "未知错误")
                     raise ConnectorPullError(f"纷享销客 API 错误: {error_msg}")
 
-                records = result.get(entity_config["list_key"], [])
+                records = data.get("dataList", [])
                 all_records.extend(records)
 
-                # 检查是否还有更多数据
-                has_more = result.get("hasMore", False)
-                if not has_more or not records:
+                total = data.get("totalNumber") or records[0].get("total_num", 0) if records else 0
+                if not records or offset + len(records) >= total:
                     break
 
-                page_number += 1
+                offset += len(records)
 
             return all_records
         except ConnectorPullError:
@@ -195,23 +191,13 @@ class FenxiangxiaokeConnector(BaseConnector):
             raise ConnectorPullError(f"拉取 {entity} 失败: {e}") from e
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
-        """推送数据到纷享销客
-
-        纷享销客支持通过 API 创建实体数据。
-
-        Args:
-            entity: 实体类型
-            records: 要推送的记录列表
-
-        Returns:
-            PushResult 包含成功和失败计数
-        """
+        """推送数据到纷享销客"""
         if entity not in FXIAOKE_ENTITIES:
             raise ConnectorPushError(f"不支持的实体类型: {entity}")
 
         self._ensure_token()
         entity_config = FXIAOKE_ENTITIES[entity]
-        url = f"{self.config['base_url']}{entity_config['create_path']}"
+        url = f"{self.config['base_url']}{FXIAOKE_CREATE_PATH}"
 
         success_count = 0
         failure_count = 0
@@ -223,11 +209,11 @@ class FenxiangxiaokeConnector(BaseConnector):
                     "corpAccessToken": self._token,
                     "corpId": self.config.get("corp_id", ""),
                     "currentOpenUserId": self.config.get("open_user_id", ""),
-                    "data": record,
+                    "data": {
+                        "dataObjectApiName": entity_config["api_name"],
+                        "objectData": record,
+                    },
                 }
-
-                if "api_name" in entity_config:
-                    payload["apiName"] = entity_config["api_name"]
 
                 result = self._request("POST", url, json=payload)
 
