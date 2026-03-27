@@ -14,6 +14,13 @@ ENTITY_REGISTRY: dict[str, dict] = {
     "inventory": {"table": "unified_inventory", "model": UnifiedInventory, "id_field": "id"},
     "project": {"table": "unified_projects", "model": UnifiedProject, "id_field": "id"},
     "contact": {"table": "unified_contacts", "model": UnifiedContact, "id_field": "id"},
+    "employee": {"table": "unified_contacts", "model": UnifiedContact, "id_field": "user_id"},
+    "department": {
+        "table": "unified_projects",
+        "model": UnifiedProject,
+        "id_field": "open_department_id",
+    },
+    "approval": {"table": "unified_orders", "model": UnifiedOrder, "id_field": "instance_code"},
     "sales_order": {"table": "unified_orders", "model": UnifiedOrder, "id_field": "FBillNo"},
     "purchase_order": {"table": "unified_orders", "model": UnifiedOrder, "id_field": "FBillNo"},
     "material": {"table": "unified_products", "model": UnifiedProduct, "id_field": "FNumber"},
