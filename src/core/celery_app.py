@@ -18,4 +18,4 @@ celery_app.conf.update(
     task_track_started=True,
     worker_hijack_root_logger=False,
 )
-celery_app.conf.update(include=["src.tasks.sync_tasks"])
+celery_app.conf.update(include=["src.tasks.sync_tasks", "src.tasks.flow_tasks"])

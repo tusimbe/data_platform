@@ -1,4 +1,6 @@
 # src/connectors/feishu.py
+import json
+import uuid as uuid_module
 import time
 import logging
 from datetime import datetime
@@ -12,6 +14,7 @@ from src.connectors.base import (
     EntityInfo,
     PushResult,
     ConnectorPullError,
+    ConnectorPushError,
 )
 
 logger = logging.getLogger(__name__)
@@ -256,6 +259,88 @@ class FeishuConnector(BaseConnector):
         except Exception as e:
             logger.error(f"飞书审批拉取失败: {e}")
             raise ConnectorPullError(f"拉取 approval 失败: {e}") from e
+
+    def create_approval_instance(
+        self,
+        approval_code: str,
+        open_id: str,
+        form_data: list[dict],
+        uuid: str | None = None,
+    ) -> str:
+        self._ensure_token()
+        url = f"{self.config['base_url']}/open-apis/approval/v4/instances"
+        payload = {
+            "approval_code": approval_code,
+            "open_id": open_id,
+            "form": json.dumps(form_data),
+            "uuid": uuid or str(uuid_module.uuid4()),
+        }
+
+        try:
+            result = self._request("POST", url, json=payload)
+        except Exception as e:
+            raise ConnectorPushError(f"创建飞书审批实例失败: {e}") from e
+
+        if result.get("code") != 0:
+            raise ConnectorPushError(result.get("msg") or "创建飞书审批实例失败")
+
+        instance_code = result.get("data", {}).get("instance_code")
+        if not instance_code:
+            raise ConnectorPushError("创建飞书审批实例失败: 未返回 instance_code")
+
+        logger.info(f"Created Feishu approval instance: {instance_code}")
+        return instance_code
+
+    def get_approval_instance(self, instance_code: str) -> dict:
+        self._ensure_token()
+        url = f"{self.config['base_url']}/open-apis/approval/v4/instances/{instance_code}"
+
+        try:
+            result = self._request("GET", url)
+        except Exception as e:
+            raise ConnectorPushError(f"获取飞书审批实例失败: {e}") from e
+
+        if result.get("code") != 0:
+            raise ConnectorPushError(result.get("msg") or "获取飞书审批实例失败")
+
+        instance = result.get("data")
+        if not isinstance(instance, dict):
+            raise ConnectorPushError("获取飞书审批实例失败: 返回数据格式错误")
+
+        logger.info(f"Fetched Feishu approval instance: {instance_code}")
+        return instance
+
+    def send_message(
+        self,
+        receive_id: str,
+        msg_type: str,
+        content: dict,
+        receive_id_type: str = "open_id",
+    ) -> str:
+        self._ensure_token()
+        url = (
+            f"{self.config['base_url']}/open-apis/im/v1/messages?receive_id_type={receive_id_type}"
+        )
+        payload = {
+            "receive_id": receive_id,
+            "msg_type": msg_type,
+            "content": json.dumps(content),
+        }
+
+        try:
+            result = self._request("POST", url, json=payload)
+        except Exception as e:
+            raise ConnectorPushError(f"发送飞书消息失败: {e}") from e
+
+        if result.get("code") != 0:
+            raise ConnectorPushError(result.get("msg") or "发送飞书消息失败")
+
+        message_id = result.get("data", {}).get("message_id")
+        if not message_id:
+            raise ConnectorPushError("发送飞书消息失败: 未返回 message_id")
+
+        logger.info(f"Sent Feishu message: {message_id}")
+        return message_id
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
         """飞书大部分实体不支持写入，返回失败结果

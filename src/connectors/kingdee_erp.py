@@ -100,6 +100,40 @@ KINGDEE_ENTITIES = {
             "FVOUCHERGROUPNO",
         ],
     },
+    "return_order": {
+        "form_id": "SAL_RETURNSTOCK",
+        "description": "销售退货单",
+        "field_keys": [
+            "FBillNo",
+            "FDate",
+            "FBillTypeID.FName",
+            "FCustId.FName",
+            "FDocumentStatus",
+            "FApproveDate",
+        ],
+    },
+    "receivable": {
+        "form_id": "AR_RECEIVABLE",
+        "description": "应收单",
+        "field_keys": [
+            "FBillNo",
+            "FDate",
+            "FBillTypeID.FName",
+            "FDocumentStatus",
+            "FApproveDate",
+        ],
+    },
+    "refund_bill": {
+        "form_id": "AR_REFUNDBILL",
+        "description": "收款退款单",
+        "field_keys": [
+            "FBillNo",
+            "FDate",
+            "FBillTypeID.FName",
+            "FDocumentStatus",
+            "FApproveDate",
+        ],
+    },
 }
 
 MAX_PAGES = 500
@@ -108,6 +142,8 @@ _SAFE_FILTER_VALUE = re.compile(r"^[\w\s\-\.:/]+$")
 _AUTH_PATH = "Kingdee.BOS.WebApi.ServicesStub.AuthService.ValidateUser.common.kdsvc"
 _QUERY_PATH = "Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.ExecuteBillQuery.common.kdsvc"
 _SAVE_PATH = "Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.Save.common.kdsvc"
+_SUBMIT_PATH = "Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.Submit.common.kdsvc"
+_AUDIT_PATH = "Kingdee.BOS.WebApi.ServicesStub.DynamicFormService.Audit.common.kdsvc"
 
 
 @register_connector("kingdee_erp")
@@ -270,6 +306,96 @@ class KingdeeERPConnector(BaseConnector):
             failure_count=failure_count,
             failures=failures,
         )
+
+    @staticmethod
+    def _extract_result_payload(result: dict) -> dict:
+        payload = result.get("Result", {})
+        if isinstance(payload, dict) and isinstance(payload.get("Result"), dict):
+            return payload["Result"]
+        return payload if isinstance(payload, dict) else {}
+
+    def submit(self, form_id: str, bill_id: str, bill_no: str = "") -> dict:
+        payload = {"data": {"FormId": form_id, "Ids": bill_id}}
+        if bill_no:
+            payload["data"]["Numbers"] = [bill_no]
+
+        result = self._request("POST", self._api_url(_SUBMIT_PATH), json=payload)
+        if not isinstance(result, dict):
+            raise ConnectorPushError(f"Submit返回格式异常: {type(result)}")
+
+        result_payload = self._extract_result_payload(result)
+        is_success = result_payload.get("ResponseStatus", {}).get("IsSuccess")
+        if not is_success:
+            raise ConnectorPushError(
+                f"Submit失败: form_id={form_id}, bill_id={bill_id}, response={result}"
+            )
+
+        logger.info("Kingdee submit succeeded: form_id=%s, bill_id=%s", form_id, bill_id)
+        return result
+
+    def audit(self, form_id: str, bill_id: str, bill_no: str = "") -> dict:
+        payload = {"data": {"FormId": form_id, "Ids": bill_id}}
+        if bill_no:
+            payload["data"]["Numbers"] = [bill_no]
+
+        result = self._request("POST", self._api_url(_AUDIT_PATH), json=payload)
+        if not isinstance(result, dict):
+            raise ConnectorPushError(f"Audit返回格式异常: {type(result)}")
+
+        result_payload = self._extract_result_payload(result)
+        is_success = result_payload.get("ResponseStatus", {}).get("IsSuccess")
+        if not is_success:
+            raise ConnectorPushError(
+                f"Audit失败: form_id={form_id}, bill_id={bill_id}, response={result}"
+            )
+
+        logger.info("Kingdee audit succeeded: form_id=%s, bill_id=%s", form_id, bill_id)
+        return result
+
+    def save_then_submit_audit(self, form_id: str, model: dict) -> dict:
+        save_payload = {"data": {"FormId": form_id, "Model": model}}
+        logger.info("Kingdee save step started: form_id=%s", form_id)
+        save_result = self._request("POST", self._api_url(_SAVE_PATH), json=save_payload)
+        if not isinstance(save_result, dict):
+            raise ConnectorPushError(f"Save返回格式异常: {type(save_result)}")
+
+        save_payload_result = self._extract_result_payload(save_result)
+        save_success = save_payload_result.get("ResponseStatus", {}).get("IsSuccess")
+        if not save_success:
+            raise ConnectorPushError(f"Save失败: form_id={form_id}, response={save_result}")
+
+        bill_id = save_payload_result.get("Id")
+        bill_no = save_payload_result.get("Number", "")
+        if not bill_id:
+            raise ConnectorPushError(
+                f"Save成功但缺少单据ID: form_id={form_id}, response={save_result}"
+            )
+
+        bill_id_str = str(bill_id)
+        bill_no_str = str(bill_no) if bill_no else ""
+        logger.info(
+            "Kingdee save step succeeded: form_id=%s, bill_id=%s, bill_no=%s",
+            form_id,
+            bill_id_str,
+            bill_no_str,
+        )
+
+        logger.info("Kingdee submit step started: form_id=%s, bill_id=%s", form_id, bill_id_str)
+        submit_result = self.submit(form_id, bill_id_str, bill_no_str)
+
+        logger.info("Kingdee audit step started: form_id=%s, bill_id=%s", form_id, bill_id_str)
+        audit_result = self.audit(form_id, bill_id_str, bill_no_str)
+
+        logger.info(
+            "Kingdee save-submit-audit completed: form_id=%s, bill_id=%s", form_id, bill_id_str
+        )
+        return {
+            "bill_id": bill_id_str,
+            "bill_no": bill_no_str,
+            "save_result": save_result,
+            "submit_result": submit_result,
+            "audit_result": audit_result,
+        }
 
     def get_schema(self, entity: str) -> dict:
         return KINGDEE_ENTITIES.get(entity, {})
