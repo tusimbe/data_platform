@@ -30,6 +30,11 @@ FEISHU_ENTITIES = {
         "path": "/open-apis/contact/v3/departments",
         "description": "部门",
         "list_key": "items",
+        "page_size": 50,  # 部门 API 最大 page_size=50, 超过返回空
+        "default_params": {
+            "parent_department_id": "0",
+            "fetch_child": "true",
+        },
     },
     "approval": {
         "path": "/open-apis/approval/v4/instances",
@@ -138,7 +143,11 @@ class FeishuConnector(BaseConnector):
                     logger.warning(f"Reached max page limit ({MAX_PAGES}) for entity={entity}")
                     break
 
-                params = {"page_size": DEFAULT_PAGE_SIZE}
+                page_size = entity_config.get("page_size", DEFAULT_PAGE_SIZE)
+                params = {"page_size": page_size}
+                default_params = entity_config.get("default_params")
+                if default_params:
+                    params.update(default_params)
                 if page_token:
                     params["page_token"] = page_token
                 if filters:
