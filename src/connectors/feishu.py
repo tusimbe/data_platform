@@ -38,10 +38,16 @@ FEISHU_ENTITIES = {
     },
     "approval": {
         "path": "/open-apis/approval/v4/instances",
+        "detail_path": "/open-apis/approval/v4/instances/{instance_id}",
         "description": "审批实例",
-        "list_key": "items",
+        "list_key": "instance_code_list",
+        "page_size": 100,
     },
 }
+
+_APPROVAL_MAX_RANGE_MS = 30 * 24 * 3600 * 1000
+_APPROVAL_DEFAULT_LOOKBACK_DAYS = 90
+_DETAIL_BATCH_SIZE = 50
 
 
 @register_connector("feishu")
@@ -129,10 +135,14 @@ class FeishuConnector(BaseConnector):
             raise ConnectorPullError(f"不支持的实体类型: {entity}")
 
         self._ensure_token()
+
+        if entity == "approval":
+            return self._pull_approvals(since, filters)
+
         entity_config = FEISHU_ENTITIES[entity]
         url = f"{self.config['base_url']}{entity_config['path']}"
 
-        all_records = []
+        all_records: list[dict] = []
         page_token = None
         page_count = 0
 
@@ -144,7 +154,7 @@ class FeishuConnector(BaseConnector):
                     break
 
                 page_size = entity_config.get("page_size", DEFAULT_PAGE_SIZE)
-                params = {"page_size": page_size}
+                params: dict = {"page_size": page_size}
                 default_params = entity_config.get("default_params")
                 if default_params:
                     params.update(default_params)
@@ -171,6 +181,81 @@ class FeishuConnector(BaseConnector):
         except Exception as e:
             logger.error(f"飞书拉取失败: entity={entity}, error={e}")
             raise ConnectorPullError(f"拉取 {entity} 失败: {e}") from e
+
+    def _pull_approvals(
+        self,
+        since: datetime | None = None,
+        filters: dict | None = None,
+    ) -> list[dict]:
+        filters = filters or {}
+        approval_code = filters.get("approval_code") or self.config.get("approval_code")
+        if not approval_code:
+            raise ConnectorPullError(
+                "approval_code is required — set it in connector auth_config or pass via filters"
+            )
+
+        now_ms = int(time.time() * 1000)
+        if since:
+            start_ms = int(since.timestamp() * 1000)
+        else:
+            start_ms = now_ms - _APPROVAL_DEFAULT_LOOKBACK_DAYS * 86400 * 1000
+
+        entity_config = FEISHU_ENTITIES["approval"]
+        list_url = f"{self.config['base_url']}{entity_config['path']}"
+
+        all_codes: list[str] = []
+        try:
+            chunk_start = start_ms
+            while chunk_start < now_ms:
+                chunk_end = min(chunk_start + _APPROVAL_MAX_RANGE_MS, now_ms)
+                page_token = None
+
+                while True:
+                    params: dict = {
+                        "approval_code": approval_code,
+                        "start_time": str(chunk_start),
+                        "end_time": str(chunk_end),
+                        "page_size": entity_config.get("page_size", DEFAULT_PAGE_SIZE),
+                    }
+                    if page_token:
+                        params["page_token"] = page_token
+
+                    result = self._request("GET", list_url, params=params)
+                    if result.get("code") != 0:
+                        raise ConnectorPullError(f"飞书 API 错误: {result.get('msg')}")
+
+                    data = result.get("data", {})
+                    codes = data.get("instance_code_list", [])
+                    all_codes.extend(codes)
+
+                    page_token = data.get("page_token")
+                    if not page_token:
+                        break
+
+                chunk_start = chunk_end
+
+            logger.info(f"Approval list done: {len(all_codes)} instance codes")
+
+            detail_tpl = f"{self.config['base_url']}{entity_config['detail_path']}"
+            all_records: list[dict] = []
+            for i in range(0, len(all_codes), _DETAIL_BATCH_SIZE):
+                batch = all_codes[i : i + _DETAIL_BATCH_SIZE]
+                for code in batch:
+                    url = detail_tpl.format(instance_id=code)
+                    result = self._request("GET", url)
+                    if result.get("code") == 0:
+                        all_records.append(result["data"])
+                    else:
+                        logger.warning(f"Failed to fetch approval {code}: {result.get('msg')}")
+
+                logger.info(f"Approval details: {len(all_records)}/{len(all_codes)} fetched")
+
+            return all_records
+        except ConnectorPullError:
+            raise
+        except Exception as e:
+            logger.error(f"飞书审批拉取失败: {e}")
+            raise ConnectorPullError(f"拉取 approval 失败: {e}") from e
 
     def push(self, entity: str, records: list[dict]) -> PushResult:
         """飞书大部分实体不支持写入，返回失败结果
