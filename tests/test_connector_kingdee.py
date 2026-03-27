@@ -2,17 +2,17 @@
 import pytest
 from unittest.mock import patch
 
-from src.connectors.kingdee_erp import KingdeeERPConnector
-from src.connectors.base import ConnectorPullError, connector_registry
+from src.connectors.kingdee_erp import KingdeeERPConnector, KINGDEE_ENTITIES
+from src.connectors.base import ConnectorPullError, ConnectorError, connector_registry
 
 
 @pytest.fixture
 def kingdee_config():
     return {
         "base_url": "https://api.kingdee.com",
-        "app_id": "test_app_id",
-        "app_secret": "test_app_secret",
         "acct_id": "test_acct_id",
+        "username": "test_user",
+        "password": "test_pass",
     }
 
 
@@ -22,13 +22,11 @@ def connector(kingdee_config):
 
 
 def test_kingdee_registered():
-    """金蝶ERP连接器应已注册到全局注册表"""
     cls = connector_registry.get("kingdee_erp")
     assert cls is KingdeeERPConnector
 
 
 def test_kingdee_list_entities(connector):
-    """应返回支持的实体列表"""
     entities = connector.list_entities()
     assert len(entities) > 0
     names = [e.name for e in entities]
@@ -37,7 +35,6 @@ def test_kingdee_list_entities(connector):
 
 
 def test_kingdee_health_check_success(connector):
-    """健康检查成功时应返回 healthy"""
     with patch.object(connector, "_request") as mock_req:
         mock_req.return_value = {"Result": {"ResponseStatus": {"IsSuccess": True}}}
         result = connector.health_check()
@@ -46,7 +43,6 @@ def test_kingdee_health_check_success(connector):
 
 
 def test_kingdee_health_check_failure(connector):
-    """健康检查失败时应返回 unhealthy"""
     with patch.object(connector, "_request") as mock_req:
         mock_req.side_effect = Exception("Connection refused")
         result = connector.health_check()
@@ -54,36 +50,78 @@ def test_kingdee_health_check_failure(connector):
         assert "Connection refused" in result.error
 
 
+def test_kingdee_connect_success(connector):
+    with patch.object(connector, "_request") as mock_req:
+        mock_req.return_value = {
+            "IsSuccessByAPI": True,
+            "LoginResultType": 1,
+            "KDSVCSessionId": "test-session-id",
+        }
+        connector.connect()
+        assert connector._authenticated is True
+
+
+def test_kingdee_connect_failure(connector):
+    with patch.object(connector, "_request") as mock_req:
+        mock_req.return_value = {
+            "IsSuccessByAPI": False,
+            "LoginResultType": 0,
+            "Message": "Invalid credentials",
+        }
+        with pytest.raises(ConnectorError, match="Auth failed"):
+            connector.connect()
+
+
 def test_kingdee_pull_success(connector):
-    """拉取数据成功应返回字典列表"""
-    mock_response = [
-        {"FBillNo": "SO-001", "FDate": "2026-01-01", "FAmount": 1000},
-        {"FBillNo": "SO-002", "FDate": "2026-01-02", "FAmount": 2000},
+    field_keys = KINGDEE_ENTITIES["sales_order"]["field_keys"]
+    mock_rows = [
+        [
+            "SO-001",
+            "2026-01-01",
+            "标准销售订单",
+            "客户A",
+            "销售员1",
+            "组织1",
+            "C",
+            "2026-01-02",
+            "销售部",
+        ],
+        [
+            "SO-002",
+            "2026-01-02",
+            "标准销售订单",
+            "客户B",
+            "销售员2",
+            "组织1",
+            "C",
+            "2026-01-03",
+            "销售部",
+        ],
     ]
     with patch.object(connector, "_request") as mock_req:
-        mock_req.return_value = mock_response
+        mock_req.return_value = mock_rows
         records = connector.pull(entity="sales_order")
         assert len(records) == 2
         assert records[0]["FBillNo"] == "SO-001"
+        assert records[0]["FCustId.FName"] == "客户A"
+        assert records[1]["FBillNo"] == "SO-002"
+
+        call_payload = mock_req.call_args[1]["json"]
+        assert "data" in call_payload
+        assert call_payload["data"]["FormId"] == "SAL_SaleOrder"
+        assert call_payload["data"]["FieldKeys"] == ",".join(field_keys)
 
 
 def test_kingdee_pull_failure(connector):
-    """拉取数据失败应抛出 ConnectorPullError"""
     with patch.object(connector, "_request") as mock_req:
         mock_req.side_effect = Exception("API Error 500")
         with pytest.raises(ConnectorPullError):
             connector.pull(entity="sales_order")
 
 
-def test_kingdee_connect_gets_token(connector):
-    """connect() 应获取会话令牌"""
-    with patch.object(connector, "_request") as mock_req:
-        mock_req.return_value = {
-            "KDToken": "mock-token-123",
-            "IsSuccessByAPI": True,
-        }
-        connector.connect()
-        assert connector._token == "mock-token-123"
+def test_kingdee_pull_unsupported_entity(connector):
+    with pytest.raises(ConnectorPullError, match="不支持的实体类型"):
+        connector.pull(entity="nonexistent")
 
 
 def test_sanitize_filter_value_accepts_safe_value(connector):
@@ -110,7 +148,8 @@ def test_sanitize_filter_value_rejects_parentheses(connector):
 def test_kingdee_pull_max_pages_cap(connector):
     from src.connectors.kingdee_erp import MAX_PAGES
 
-    full_page = [{"FBillNo": f"SO-{i}"} for i in range(2000)]
+    field_keys = KINGDEE_ENTITIES["sales_order"]["field_keys"]
+    full_page = [["SO-001"] + [""] * (len(field_keys) - 1)] * 2000
 
     call_count = 0
 
@@ -127,8 +166,9 @@ def test_kingdee_pull_max_pages_cap(connector):
 
 
 def test_kingdee_pull_multi_page(connector):
-    page1 = [{"FBillNo": f"SO-{i}"} for i in range(2000)]
-    page2 = [{"FBillNo": f"SO-{i}"} for i in range(2000, 2500)]
+    field_keys = KINGDEE_ENTITIES["sales_order"]["field_keys"]
+    page1 = [[f"SO-{i}"] + [""] * (len(field_keys) - 1) for i in range(2000)]
+    page2 = [[f"SO-{i}"] + [""] * (len(field_keys) - 1) for i in range(2000, 2500)]
 
     pages = [page1, page2]
     call_idx = 0
@@ -144,3 +184,38 @@ def test_kingdee_pull_multi_page(connector):
 
     assert call_idx == 2
     assert len(records) == 2500
+    assert records[0]["FBillNo"] == "SO-0"
+    assert records[2499]["FBillNo"] == "SO-2499"
+
+
+def test_rows_to_dicts():
+    rows = [
+        [1, "A", "B"],
+        [2, "C", "D"],
+    ]
+    keys = ["id", "name", "desc"]
+    result = KingdeeERPConnector._rows_to_dicts(rows, keys)
+    assert len(result) == 2
+    assert result[0] == {"id": 1, "name": "A", "desc": "B"}
+    assert result[1] == {"id": 2, "name": "C", "desc": "D"}
+
+
+def test_rows_to_dicts_skips_non_list():
+    rows = [
+        [1, "A"],
+        {"error": "something"},
+        [2, "B"],
+    ]
+    keys = ["id", "name"]
+    result = KingdeeERPConnector._rows_to_dicts(rows, keys)
+    assert len(result) == 2
+
+
+def test_kingdee_push_wraps_data(connector):
+    with patch.object(connector, "_request") as mock_req:
+        mock_req.return_value = {"Result": {"ResponseStatus": {"IsSuccess": True}}}
+        connector.push("sales_order", [{"FBillNo": "SO-001"}])
+
+        call_payload = mock_req.call_args[1]["json"]
+        assert "data" in call_payload
+        assert call_payload["data"]["FormId"] == "SAL_SaleOrder"

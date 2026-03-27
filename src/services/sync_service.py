@@ -2,6 +2,7 @@
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import insert as sa_insert, select as sa_select, update as sa_update
 from sqlalchemy.orm import Session
 
 from src.connectors.base import BaseConnector
@@ -9,6 +10,9 @@ from src.core.entity_registry import get_entity_id_field, get_entity_model
 from src.services.field_mapping_service import FieldMappingService
 
 logger = logging.getLogger(__name__)
+
+# Batch size for bulk DB operations
+_BATCH_SIZE = 2000
 
 
 class SyncExecutor:
@@ -69,7 +73,160 @@ class SyncExecutor:
         session: Session,
         sync_log_id: int | None = None,
     ) -> int:
-        """阶段3：存储原始数据到 raw_data + 更新插入统一表。返回存储成功条数"""
+        from src.models.raw_data import RawData
+
+        if self._is_postgres(session):
+            return self._store_phase_pg(
+                connector_id,
+                entity,
+                raw_records,
+                transformed_records,
+                target_table,
+                session,
+                sync_log_id,
+            )
+
+        return self._store_phase_generic(
+            connector_id,
+            entity,
+            raw_records,
+            transformed_records,
+            target_table,
+            session,
+            sync_log_id,
+        )
+
+    def _store_phase_pg(
+        self,
+        connector_id: int,
+        entity: str,
+        raw_records: list[dict],
+        transformed_records: list[dict],
+        target_table: str,
+        session: Session,
+        sync_log_id: int | None = None,
+    ) -> int:
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from src.models.raw_data import RawData
+
+        now = datetime.now(timezone.utc)
+        stored = 0
+
+        seen: dict[str, dict] = {}
+        for raw in raw_records:
+            external_id = self._extract_external_id(raw, entity)
+            if not external_id:
+                continue
+            seen[str(external_id)] = {
+                "connector_id": connector_id,
+                "entity": entity,
+                "external_id": str(external_id),
+                "data": raw,
+                "synced_at": now,
+                "sync_log_id": sync_log_id,
+            }
+        rows_to_upsert = list(seen.values())
+
+        for i in range(0, len(rows_to_upsert), _BATCH_SIZE):
+            batch = rows_to_upsert[i : i + _BATCH_SIZE]
+            stmt = pg_insert(RawData.__table__).values(batch)
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_raw_data_source",
+                set_={
+                    "data": stmt.excluded.data,
+                    "synced_at": stmt.excluded.synced_at,
+                    "sync_log_id": stmt.excluded.sync_log_id,
+                },
+            )
+            session.execute(stmt)
+            stored += len(batch)
+
+        session.flush()
+
+        ext_ids = [r["external_id"] for r in rows_to_upsert]
+        raw_data_id_map: dict[str, int] = {}
+        for i in range(0, len(ext_ids), _BATCH_SIZE):
+            batch_ids = ext_ids[i : i + _BATCH_SIZE]
+            rows = session.execute(
+                sa_select(RawData.id, RawData.external_id).where(
+                    RawData.connector_id == connector_id,
+                    RawData.entity == entity,
+                    RawData.external_id.in_(batch_ids),
+                )
+            ).all()
+            for row in rows:
+                raw_data_id_map[row.external_id] = row.id
+
+        unified_model = self._get_unified_model(target_table)
+        if unified_model is not None:
+            connector_type = self._connector_type_for_id(connector_id, session)
+            valid_cols = {c.name for c in unified_model.__table__.columns}
+
+            unified_seen: dict[str, dict] = {}
+            for record in transformed_records:
+                mapped = {k: v for k, v in record.items() if k != "_raw"}
+                raw_ref = record.get("_raw", {})
+                ext_id = self._extract_external_id(raw_ref, entity)
+                if not ext_id:
+                    continue
+
+                row_data = {
+                    "source_system": connector_type,
+                    "external_id": str(ext_id),
+                    "source_data_id": raw_data_id_map.get(str(ext_id)),
+                    "synced_at": now,
+                }
+                for k, v in mapped.items():
+                    if k in valid_cols:
+                        row_data[k] = self._coerce_value(unified_model, k, v)
+                unified_seen[str(ext_id)] = row_data
+            unified_rows = list(unified_seen.values())
+
+            uq_name = None
+            for constraint in unified_model.__table__.constraints:
+                if (
+                    hasattr(constraint, "name")
+                    and constraint.name
+                    and constraint.name.startswith("uq_")
+                ):
+                    uq_name = constraint.name
+                    break
+
+            if uq_name:
+                update_cols = [
+                    c
+                    for c in valid_cols
+                    if c not in ("id", "source_system", "external_id", "created_at")
+                ]
+                for i in range(0, len(unified_rows), _BATCH_SIZE):
+                    batch = unified_rows[i : i + _BATCH_SIZE]
+                    stmt = pg_insert(unified_model.__table__).values(batch)
+                    stmt = stmt.on_conflict_do_update(
+                        constraint=uq_name,
+                        set_={
+                            col: stmt.excluded[col] for col in update_cols if col in stmt.excluded
+                        },
+                    )
+                    session.execute(stmt)
+            else:
+                for i in range(0, len(unified_rows), _BATCH_SIZE):
+                    batch = unified_rows[i : i + _BATCH_SIZE]
+                    session.execute(sa_insert(unified_model.__table__).values(batch))
+
+            session.flush()
+
+        return stored
+
+    def _store_phase_generic(
+        self,
+        connector_id: int,
+        entity: str,
+        raw_records: list[dict],
+        transformed_records: list[dict],
+        target_table: str,
+        session: Session,
+        sync_log_id: int | None = None,
+    ) -> int:
         from src.models.raw_data import RawData
 
         stored = 0
@@ -78,7 +235,6 @@ class SyncExecutor:
             if not external_id:
                 continue
 
-            # 更新插入 raw_data
             existing = (
                 session.query(RawData)
                 .filter_by(
@@ -123,10 +279,8 @@ class SyncExecutor:
                 if rd:
                     raw_data_id_map[str(ext_id)] = rd.id
 
-        # 更新插入统一表
         unified_model = self._get_unified_model(target_table)
         if unified_model is not None:
-            # 提前查询 connector_type，避免循环中 N+1 查询
             connector_type = self._connector_type_for_id(connector_id, session)
 
             for record in transformed_records:
@@ -155,10 +309,8 @@ class SyncExecutor:
                     mapped["source_system"] = connector_type
                     mapped["external_id"] = str(ext_id)
                     mapped["source_data_id"] = raw_data_id_map.get(str(ext_id))
-                    # 只传统一模型实际拥有的列
                     valid_cols = {c.name for c in unified_model.__table__.columns}
                     filtered = {k: v for k, v in mapped.items() if k in valid_cols}
-                    # 类型强制转换
                     filtered = {
                         k: self._coerce_value(unified_model, k, v) for k, v in filtered.items()
                     }
@@ -322,7 +474,6 @@ class SyncExecutor:
 
     @staticmethod
     def _coerce_value(model_class, column_name: str, value):
-        """根据模型列类型强制转换值（如字符串日期 → date 对象）"""
         from sqlalchemy import Date, DateTime
 
         if value is None:
@@ -335,7 +486,6 @@ class SyncExecutor:
         col_type = table.columns[column_name].type
 
         if isinstance(col_type, Date) and isinstance(value, str):
-            # 尝试解析 YYYY-MM-DD 格式的日期字符串
             try:
                 return datetime.strptime(value, "%Y-%m-%d").date()
             except ValueError:
@@ -348,3 +498,7 @@ class SyncExecutor:
                 return value
 
         return value
+
+    @staticmethod
+    def _is_postgres(session: Session) -> bool:
+        return session.bind.dialect.name == "postgresql" if session.bind else False
