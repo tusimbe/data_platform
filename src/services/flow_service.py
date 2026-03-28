@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import PaginationParams, paginate
 from src.core.exceptions import NotFoundError, ValidationError
-from src.models.flow import FlowDefinition, FlowInstance
+from src.models.flow import FlowDefinition, FlowInstance, FlowStepAudit
 
 logger = logging.getLogger(__name__)
 
@@ -72,21 +72,46 @@ def advance_flow(instance_id: int, db: Session) -> dict:
     if instance.status == "pending":
         instance.started_at = datetime.now(timezone.utc)
     instance.status = "running"
+
+    audit = FlowStepAudit(
+        flow_instance_id=instance.id,
+        step_index=instance.current_step,
+        action=action,
+        status="started",
+        attempt=instance.retry_count + 1,
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(audit)
     db.flush()
 
     try:
         result = handler(instance.context, db)
     except Exception as e:
-        logger.exception(f"Flow {instance_id} step {step['name']} handler error: {e}")
+        logger.exception(
+            "Flow step handler execution error",
+            extra={
+                "flow_instance_id": instance_id,
+                "step_name": step["name"],
+                "error": str(e),
+            },
+        )
         result = StepResult(status="failed", error=str(e))
 
     if result.status == "completed":
+        audit.status = "completed"
+        audit.completed_at = datetime.now(timezone.utc)
+        audit.step_data = result.data
         new_context = {**instance.context, **result.data}
         try:
             context_size = len(json.dumps(new_context))
             if context_size > 1_000_000:
                 logger.warning(
-                    f"Flow {instance_id} context size {context_size} bytes exceeds 1MB warning threshold"
+                    "Flow context size exceeds 1MB warning threshold",
+                    extra={
+                        "flow_instance_id": instance_id,
+                        "context_size_bytes": context_size,
+                        "warning_threshold_bytes": 1_000_000,
+                    },
                 )
         except (TypeError, ValueError):
             pass
@@ -97,7 +122,13 @@ def advance_flow(instance_id: int, db: Session) -> dict:
         if instance.current_step >= len(steps):
             instance.status = "completed"
             instance.completed_at = datetime.now(timezone.utc)
-            logger.info(f"Flow {instance_id} completed all steps")
+            logger.info(
+                "Flow completed all steps",
+                extra={
+                    "flow_instance_id": instance_id,
+                    "total_steps": len(steps),
+                },
+            )
         else:
             next_step = steps[instance.current_step]
             if next_step["action"].startswith("poll_"):
@@ -108,30 +139,57 @@ def advance_flow(instance_id: int, db: Session) -> dict:
         return {"status": instance.status, "current_step": instance.current_step}
 
     if result.status == "waiting":
+        audit.status = "waiting"
+        audit.completed_at = datetime.now(timezone.utc)
         instance.status = "waiting"
         db.flush()
         return {"status": "waiting", "current_step": instance.current_step}
 
     if result.status == "cancelled":
+        audit.status = "cancelled"
+        audit.completed_at = datetime.now(timezone.utc)
+        audit.error_message = result.error
         instance.status = "cancelled"
         instance.error_message = result.error
         instance.completed_at = datetime.now(timezone.utc)
         db.flush()
-        logger.info(f"Flow {instance_id} cancelled at step {step['name']}: {result.error}")
+        logger.info(
+            "Flow cancelled at step",
+            extra={
+                "flow_instance_id": instance_id,
+                "step_name": step["name"],
+                "cancel_reason": result.error,
+            },
+        )
         return {"status": "cancelled", "reason": result.error}
 
     if result.status == "failed":
+        audit.status = "failed"
+        audit.completed_at = datetime.now(timezone.utc)
+        audit.error_message = result.error
         instance.retry_count += 1
         instance.error_message = result.error
         if instance.retry_count >= MAX_RETRIES_PER_STEP:
             instance.status = "failed"
             logger.error(
-                f"Flow {instance_id} step {step['name']} failed after {MAX_RETRIES_PER_STEP} retries"
+                "Flow step failed after max retries",
+                extra={
+                    "flow_instance_id": instance_id,
+                    "step_name": step["name"],
+                    "retry_count": instance.retry_count,
+                    "max_retries": MAX_RETRIES_PER_STEP,
+                },
             )
         else:
             instance.status = "running"
             logger.warning(
-                f"Flow {instance_id} step {step['name']} failed (retry {instance.retry_count}/{MAX_RETRIES_PER_STEP})"
+                "Flow step failed and will retry",
+                extra={
+                    "flow_instance_id": instance_id,
+                    "step_name": step["name"],
+                    "retry_count": instance.retry_count,
+                    "max_retries": MAX_RETRIES_PER_STEP,
+                },
             )
         db.flush()
         return {
@@ -142,6 +200,9 @@ def advance_flow(instance_id: int, db: Session) -> dict:
 
     instance.status = "failed"
     instance.error_message = f"Unknown step result status: {result.status}"
+    audit.status = "failed"
+    audit.completed_at = datetime.now(timezone.utc)
+    audit.error_message = instance.error_message
     db.flush()
     return {"status": "failed", "error": instance.error_message}
 
@@ -179,16 +240,37 @@ def update_definition(db: Session, definition_id: int, data: dict) -> FlowDefini
 
 
 def create_instance(
-    db: Session, flow_definition_id: int, context: dict | None = None
+    db: Session,
+    flow_definition_id: int,
+    context: dict | None = None,
+    source_record_id: str | None = None,
 ) -> FlowInstance:
     get_definition(db, flow_definition_id)
     instance = FlowInstance(
         flow_definition_id=flow_definition_id,
         context=context or {},
+        source_record_id=source_record_id,
     )
     db.add(instance)
     db.flush()
     return instance
+
+
+def instance_exists_for_source(
+    db: Session,
+    flow_definition_id: int,
+    source_record_id: str,
+) -> bool:
+    return (
+        db.query(FlowInstance)
+        .filter(
+            FlowInstance.flow_definition_id == flow_definition_id,
+            FlowInstance.source_record_id == source_record_id,
+            FlowInstance.status.notin_(["cancelled"]),
+        )
+        .first()
+        is not None
+    )
 
 
 def list_instances(

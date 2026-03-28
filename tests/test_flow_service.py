@@ -6,6 +6,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.api.deps import PaginationParams
 from src.core.exceptions import NotFoundError, ValidationError
+from src.models.flow import FlowStepAudit
 from src.services.flow_service import (
     MAX_RETRIES_PER_STEP,
     STEP_HANDLERS,
@@ -18,6 +19,7 @@ from src.services.flow_service import (
     create_instance,
     get_definition,
     get_instance,
+    instance_exists_for_source,
     list_definitions,
     list_instances,
     retry_instance,
@@ -140,6 +142,31 @@ class TestFlowInstanceService:
 
         assert instance.context == {"foo": "bar"}
 
+    def test_create_instance_with_source_record_id(self, db_session):
+        definition = _make_definition(db_session, name="instance_source_record")
+
+        instance = create_instance(
+            db_session,
+            definition.id,
+            context={"foo": "bar"},
+            source_record_id="crm-123",
+        )
+
+        assert instance.source_record_id == "crm-123"
+
+    def test_instance_exists_for_source(self, db_session):
+        definition = _make_definition(db_session, name="exists_source_record")
+
+        create_instance(
+            db_session,
+            definition.id,
+            context={"return_request": {"_id": "crm-1"}},
+            source_record_id="crm-1",
+        )
+
+        assert instance_exists_for_source(db_session, definition.id, "crm-1") is True
+        assert instance_exists_for_source(db_session, definition.id, "crm-2") is False
+
     def test_create_instance_invalid_definition(self, db_session):
         with pytest.raises(NotFoundError):
             create_instance(db_session, 99999)
@@ -183,6 +210,82 @@ class TestFlowInstanceService:
 
 
 class TestAdvanceFlowStateMachine:
+    def test_advance_flow_creates_audit_record(self, db_session):
+        definition = _make_definition(db_session, name="adv_audit_completed")
+        instance = create_instance(db_session, definition.id, context={"seed": 1})
+
+        with patch.dict(STEP_HANDLERS, {"test_action": _completed_handler}):
+            result = advance_flow(instance.id, db_session)
+
+        audit_records = (
+            db_session.query(FlowStepAudit)
+            .filter(FlowStepAudit.flow_instance_id == instance.id)
+            .order_by(FlowStepAudit.id)
+            .all()
+        )
+        assert result["status"] == "completed"
+        assert len(audit_records) == 1
+        assert audit_records[0].step_index == 0
+        assert audit_records[0].action == "test_action"
+        assert audit_records[0].status == "completed"
+        assert audit_records[0].attempt == 1
+        assert audit_records[0].started_at is not None
+        assert audit_records[0].completed_at is not None
+        assert audit_records[0].step_data == {"handler_output": "test"}
+
+    def test_advance_flow_audit_records_failure(self, db_session):
+        definition = _make_definition(db_session, name="adv_audit_failed")
+        instance = create_instance(db_session, definition.id)
+
+        with patch.dict(STEP_HANDLERS, {"test_action": _failed_handler}):
+            result = advance_flow(instance.id, db_session)
+
+        audit_record = (
+            db_session.query(FlowStepAudit)
+            .filter(FlowStepAudit.flow_instance_id == instance.id)
+            .order_by(FlowStepAudit.id)
+            .first()
+        )
+        assert result["status"] == "running"
+        assert audit_record is not None
+        assert audit_record.status == "failed"
+        assert audit_record.error_message == "test error"
+        assert audit_record.step_data is None
+        assert audit_record.completed_at is not None
+
+    def test_advance_flow_audit_records_multiple_steps(self, db_session):
+        definition = _make_definition(
+            db_session,
+            name="adv_audit_multi",
+            steps=[
+                {"name": "s1", "action": "step_one"},
+                {"name": "s2", "action": "step_two"},
+                {"name": "s3", "action": "step_three"},
+            ],
+        )
+        instance = create_instance(db_session, definition.id)
+
+        with patch.dict(
+            STEP_HANDLERS,
+            {
+                "step_one": lambda context, db: StepResult(status="completed", data={"a": 1}),
+                "step_two": lambda context, db: StepResult(status="completed", data={"b": 2}),
+                "step_three": lambda context, db: StepResult(status="completed", data={"c": 3}),
+            },
+        ):
+            for _ in range(3):
+                advance_flow(instance.id, db_session)
+
+        audit_records = (
+            db_session.query(FlowStepAudit)
+            .filter(FlowStepAudit.flow_instance_id == instance.id)
+            .order_by(FlowStepAudit.id)
+            .all()
+        )
+        assert len(audit_records) == 3
+        assert [audit.step_index for audit in audit_records] == [0, 1, 2]
+        assert [audit.status for audit in audit_records] == ["completed", "completed", "completed"]
+
     def test_advance_flow_completed_step(self, db_session):
         definition = _make_definition(
             db_session,

@@ -5,7 +5,12 @@ from src.core.celery_app import celery_app
 from src.core.database import get_session_local
 from src.models.flow import FlowDefinition, FlowInstance
 from src.services.connector_utils import get_connector_instance
-from src.services.flow_service import advance_flow, check_step_timeout, create_instance
+from src.services.flow_service import (
+    advance_flow,
+    check_step_timeout,
+    create_instance,
+    instance_exists_for_source,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +38,12 @@ def advance_flow_task(instance_id: int, chain_depth: int = 0):
     MAX_CHAIN_DEPTH = 20
     if chain_depth > MAX_CHAIN_DEPTH:
         logger.error(
-            f"advance_flow_task: chain_depth {chain_depth} exceeds max {MAX_CHAIN_DEPTH} for instance {instance_id}"
+            "advance_flow_task chain depth exceeded",
+            extra={
+                "flow_instance_id": instance_id,
+                "chain_depth": chain_depth,
+                "max_chain_depth": MAX_CHAIN_DEPTH,
+            },
         )
         SessionLocal = get_session_local()
         session = SessionLocal()
@@ -62,7 +72,10 @@ def advance_flow_task(instance_id: int, chain_depth: int = 0):
         return result
     except Exception as e:
         session.rollback()
-        logger.exception(f"advance_flow_task failed for instance {instance_id}: {e}")
+        logger.exception(
+            "advance_flow_task failed",
+            extra={"flow_instance_id": instance_id, "error": str(e)},
+        )
         try:
             instance = session.query(FlowInstance).filter_by(id=instance_id).first()
             if instance and instance.status == "running":
@@ -107,7 +120,10 @@ def poll_waiting_flows():
                     instance.error_message = f"Step timeout: {step['name']}"
                     instance.completed_at = datetime.now(timezone.utc)
                     session.flush()
-                    logger.warning(f"Flow {instance.id} step '{step['name']}' timed out")
+                    logger.warning(
+                        "Flow step timed out",
+                        extra={"flow_instance_id": instance.id, "step_name": step["name"]},
+                    )
                     results.append({"instance_id": instance.id, "action": "timeout"})
                     continue
 
@@ -115,7 +131,10 @@ def poll_waiting_flows():
                 dispatched += 1
                 results.append({"instance_id": instance.id, "action": "dispatched"})
             except Exception as e:
-                logger.exception(f"Error processing flow instance {instance.id}: {e}")
+                logger.exception(
+                    "Error processing waiting flow instance",
+                    extra={"flow_instance_id": instance.id, "error": str(e)},
+                )
                 results.append({"instance_id": instance.id, "action": "error", "error": str(e)})
 
         session.commit()
@@ -127,7 +146,7 @@ def poll_waiting_flows():
         }
     except Exception as e:
         session.rollback()
-        logger.exception(f"poll_waiting_flows failed: {e}")
+        logger.exception("poll_waiting_flows failed", extra={"error": str(e)})
         return {"status": "error", "error": str(e)}
     finally:
         session.close()
@@ -135,14 +154,17 @@ def poll_waiting_flows():
 
 @celery_app.task(name="flow.poll_crm_returns")
 def poll_crm_returns():
-    logger.info("poll_crm_returns started")
+    logger.info("poll_crm_returns started", extra={})
     SessionLocal = get_session_local()
     session = SessionLocal()
     connector = None
     try:
         flow_def = session.query(FlowDefinition).filter_by(name="crm_return_flow").first()
         if not flow_def:
-            logger.warning("poll_crm_returns: flow definition 'crm_return_flow' not found")
+            logger.warning(
+                "poll_crm_returns flow definition not found",
+                extra={"flow_definition_name": "crm_return_flow"},
+            )
             return {
                 "status": "ok",
                 "message": "flow definition not configured",
@@ -166,20 +188,25 @@ def poll_crm_returns():
         try:
             connector = get_connector_instance("fenxiangxiaoke", session)
         except Exception as e:
-            logger.warning("poll_crm_returns: failed to get connector: %s", e)
+            logger.warning(
+                "poll_crm_returns failed to get connector",
+                extra={"connector_name": "fenxiangxiaoke", "error": str(e)},
+            )
             return {"status": "ok", "message": "connector not configured", "created": 0}
 
         try:
             records = connector.pull(return_entity, since=since)
         except Exception as e:
-            logger.exception("poll_crm_returns: connector pull failed: %s", e)
+            logger.exception(
+                "poll_crm_returns connector pull failed",
+                extra={"return_entity": return_entity, "since": str(since), "error": str(e)},
+            )
             return {"status": "error", "error": str(e), "created": 0}
 
         if not records:
             logger.info(
-                "poll_crm_returns completed: no records (entity=%s, since=%s)",
-                return_entity,
-                since,
+                "poll_crm_returns completed with no records",
+                extra={"return_entity": return_entity, "since": str(since)},
             )
             return {
                 "status": "ok",
@@ -189,42 +216,29 @@ def poll_crm_returns():
                 "created": 0,
             }
 
-        existing_instances = (
-            session.query(FlowInstance)
-            .filter(
-                FlowInstance.flow_definition_id == flow_def.id,
-                FlowInstance.status.notin_(["cancelled"]),
-            )
-            .all()
-        )
-        processed_ids = set()
-        for inst in existing_instances:
-            ctx = inst.context or {}
-            req = ctx.get("return_request", {}) if isinstance(ctx, dict) else {}
-            if isinstance(req, dict):
-                processed_id = _extract_record_id(req)
-                if processed_id:
-                    processed_ids.add(processed_id)
-
         created = 0
         skipped_existing = 0
         skipped_no_id = 0
 
         for record in records:
             if not isinstance(record, dict):
-                logger.warning("poll_crm_returns: invalid CRM record type, skipping: %s", record)
+                logger.warning(
+                    "poll_crm_returns skipping invalid CRM record type",
+                    extra={"record": record},
+                )
                 skipped_no_id += 1
                 continue
 
             record_id = _extract_record_id(record)
             if not record_id:
                 logger.warning(
-                    "poll_crm_returns: CRM return record has no ID, skipping: %s", record
+                    "poll_crm_returns skipping CRM return record without ID",
+                    extra={"record": record},
                 )
                 skipped_no_id += 1
                 continue
 
-            if record_id in processed_ids:
+            if instance_exists_for_source(session, flow_def.id, record_id):
                 skipped_existing += 1
                 continue
 
@@ -232,18 +246,22 @@ def poll_crm_returns():
                 session,
                 flow_def.id,
                 context={"return_request": record},
+                source_record_id=record_id,
             )
-            processed_ids.add(record_id)
             created += 1
             advance_flow_task.delay(instance.id)
 
         session.commit()
         logger.info(
-            "poll_crm_returns completed: created=%s skipped_existing=%s skipped_no_id=%s polled=%s",
-            created,
-            skipped_existing,
-            skipped_no_id,
-            len(records),
+            "poll_crm_returns completed",
+            extra={
+                "created": created,
+                "skipped_existing": skipped_existing,
+                "skipped_no_id": skipped_no_id,
+                "polled": len(records),
+                "flow_definition_id": flow_def.id,
+                "return_entity": return_entity,
+            },
         )
         return {
             "status": "ok",
@@ -257,12 +275,15 @@ def poll_crm_returns():
         }
     except Exception as e:
         session.rollback()
-        logger.exception("poll_crm_returns failed: %s", e)
+        logger.exception("poll_crm_returns failed", extra={"error": str(e)})
         return {"status": "error", "error": str(e), "created": 0}
     finally:
         if connector is not None:
             try:
                 connector.disconnect()
             except Exception:
-                logger.warning("poll_crm_returns: failed to disconnect connector")
+                logger.warning(
+                    "poll_crm_returns failed to disconnect connector",
+                    extra={"connector_name": "fenxiangxiaoke"},
+                )
         session.close()
