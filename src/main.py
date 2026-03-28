@@ -16,6 +16,8 @@ from src.api.routes.sync_tasks import router as sync_tasks_router
 from src.api.routes.sync_logs import router as sync_logs_router
 from src.api.routes.push import router as push_router
 from src.api.routes.data import router as data_router
+from src.api.routes.field_mappings import router as field_mappings_router
+from src.api.routes.entity_schemas import router as entity_schemas_router
 from src.api.routes.flows import router as flows_router
 from src.core.config import get_settings
 from src.core.database import init_db
@@ -52,6 +54,8 @@ app.include_router(sync_tasks_router, prefix="/api/v1", tags=["sync"])
 app.include_router(sync_logs_router, prefix="/api/v1", tags=["sync"])
 app.include_router(push_router, prefix="/api/v1", tags=["push"])
 app.include_router(data_router, prefix="/api/v1", tags=["data"])
+app.include_router(field_mappings_router, prefix="/api/v1", tags=["field-mappings"])
+app.include_router(entity_schemas_router, prefix="/api/v1", tags=["entity-schemas"])
 app.include_router(flows_router, prefix="/api/v1", tags=["flows"])
 
 # SPA fallback — 当 frontend/dist 目录存在时，挂载静态文件服务

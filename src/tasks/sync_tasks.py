@@ -15,6 +15,7 @@ from src.core.security import decrypt_value
 from src.connectors.base import connector_registry, ConnectorError
 from src.models.connector import Connector
 from src.models.sync import SyncTask, SyncLog
+from src.services.field_mapping_crud_service import get_mappings_for_sync
 from src.services.sync_service import SyncExecutor
 
 logger = logging.getLogger(__name__)
@@ -93,9 +94,15 @@ def run_sync_task(task_id: int):
             executor = SyncExecutor()
             target_table = get_entity_table(task.entity)
 
-            # Read field mappings from task config
-            task_config = task.config or {}
-            mappings = task_config.get("mappings", [])
+            # Read field mappings: DB table takes priority, fallback to task.config
+            db_mappings = get_mappings_for_sync(
+                session, connector_model.connector_type, task.entity
+            )
+            if db_mappings:
+                mappings = db_mappings
+            else:
+                task_config = task.config or {}
+                mappings = task_config.get("mappings", [])
 
             result = executor.execute_pull(
                 connector=connector,
