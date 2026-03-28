@@ -283,7 +283,7 @@ class KingdeeERPConnector(BaseConnector):
 
         for record in records:
             try:
-                payload = {"data": {"FormId": form_id, "Model": record}}
+                payload = {"formid": form_id, "data": {"Model": record}}
                 self._request("POST", url, json=payload)
                 success_count += 1
             except Exception as e:
@@ -315,7 +315,7 @@ class KingdeeERPConnector(BaseConnector):
         return payload if isinstance(payload, dict) else {}
 
     def submit(self, form_id: str, bill_id: str, bill_no: str = "") -> dict:
-        payload = {"data": {"FormId": form_id, "Ids": bill_id}}
+        payload = {"formid": form_id, "data": {"Ids": bill_id}}
         if bill_no:
             payload["data"]["Numbers"] = [bill_no]
 
@@ -334,7 +334,7 @@ class KingdeeERPConnector(BaseConnector):
         return result
 
     def audit(self, form_id: str, bill_id: str, bill_no: str = "") -> dict:
-        payload = {"data": {"FormId": form_id, "Ids": bill_id}}
+        payload = {"formid": form_id, "data": {"Ids": bill_id}}
         if bill_no:
             payload["data"]["Numbers"] = [bill_no]
 
@@ -353,7 +353,7 @@ class KingdeeERPConnector(BaseConnector):
         return result
 
     def save_then_submit_audit(self, form_id: str, model: dict) -> dict:
-        save_payload = {"data": {"FormId": form_id, "Model": model}}
+        save_payload = {"formid": form_id, "data": {"Model": model}}
         logger.info("Kingdee save step started: form_id=%s", form_id)
         save_result = self._request("POST", self._api_url(_SAVE_PATH), json=save_payload)
         if not isinstance(save_result, dict):

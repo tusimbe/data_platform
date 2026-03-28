@@ -218,4 +218,4 @@ def test_kingdee_push_wraps_data(connector):
 
         call_payload = mock_req.call_args[1]["json"]
         assert "data" in call_payload
-        assert call_payload["data"]["FormId"] == "SAL_SaleOrder"
+        assert call_payload["formid"] == "SAL_SaleOrder"
