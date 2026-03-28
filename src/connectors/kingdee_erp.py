@@ -307,6 +307,33 @@ class KingdeeERPConnector(BaseConnector):
             failures=failures,
         )
 
+    def query_bills(
+        self,
+        form_id: str,
+        field_keys: list[str],
+        filter_string: str,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Query bills using ExecuteBillQuery API and return list of dicts.
+
+        Useful for finding auto-generated bills (e.g. receivables from return order audit).
+        """
+        url = self._api_url(_QUERY_PATH)
+        payload = {
+            "data": {
+                "FormId": form_id,
+                "FieldKeys": ",".join(field_keys),
+                "FilterString": filter_string,
+                "OrderString": "",
+                "TopRowCount": 0,
+                "StartRow": 0,
+                "Limit": limit,
+            }
+        }
+        result = self._request("POST", url, json=payload)
+        raw_rows = result if isinstance(result, list) else []
+        return self._rows_to_dicts(raw_rows, field_keys)
+
     @staticmethod
     def _extract_result_payload(result: dict) -> dict:
         payload = result.get("Result", {})

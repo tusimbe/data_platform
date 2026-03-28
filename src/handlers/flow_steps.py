@@ -75,6 +75,32 @@ def poll_feishu_approval_handler(context: dict, db: Session) -> StepResult:
                 logger.warning("poll_feishu_approval_handler: failed to disconnect connector")
 
 
+def _build_return_order_model(rr: dict) -> dict:
+    from datetime import date
+
+    return {
+        "FBillTypeID": {"FNumber": "XSTHD01_SYS"},
+        "FDate": rr.get("return_date") or date.today().isoformat(),
+        "FSaleOrgId": {"FNumber": rr.get("sale_org", "100")},
+        "FStockOrgId": {"FNumber": rr.get("stock_org", "100")},
+        "FRetcustId": {"FNumber": rr.get("customer_code", "")},
+        "FReturnReason": {"FNumber": rr.get("return_reason", "7DWLY")},
+        "FEntity": [
+            {
+                "FMaterialId": {"FNumber": rr.get("material_number", "")},
+                "FUnitID": {"FNumber": rr.get("unit", "Pcs")},
+                "FRealQty": rr.get("qty", 1),
+                "FPrice": rr.get("price", 0),
+                "FTaxPrice": rr.get("tax_price") or rr.get("price", 0),
+                "FEntryTaxRate": rr.get("tax_rate", 13.0),
+                "FStockId": {"FNumber": rr.get("warehouse", "SZCK006")},
+                "FStockstatusId": {"FNumber": rr.get("stock_status", "KCZT01_SYS")},
+                "FReturnType": {"FNumber": rr.get("return_type", "THLX01_SYS")},
+            }
+        ],
+    }
+
+
 def create_erp_return_order_handler(context: dict, db: Session) -> StepResult:
     return_request = context.get("return_request", {})
     logger.info(
@@ -108,12 +134,7 @@ def create_erp_return_order_handler(context: dict, db: Session) -> StepResult:
                 },
             )
 
-        model = {
-            "FBillTypeID": {"FNumber": "XSTHD01_SYS"},
-            "FReturnDate": return_request.get("return_date", ""),
-            "FCustId": {"FNumber": return_request.get("customer_code", "")},
-            "FNote": "中台自动创建-退货流程",
-        }
+        model = _build_return_order_model(return_request)
         result = connector.save_then_submit_audit("SAL_RETURNSTOCK", model)
         return StepResult(
             status="completed",
@@ -134,9 +155,10 @@ def create_erp_return_order_handler(context: dict, db: Session) -> StepResult:
 
 
 def create_erp_negative_receivable_handler(context: dict, db: Session) -> StepResult:
+    return_order_bill_no = context.get("return_order_bill_no", "")
     logger.info(
         "Executing create_erp_negative_receivable_handler: return_order_bill_no=%s",
-        context.get("return_order_bill_no", ""),
+        return_order_bill_no,
     )
     connector = None
     try:
@@ -164,17 +186,47 @@ def create_erp_negative_receivable_handler(context: dict, db: Session) -> StepRe
                 },
             )
 
-        model = {
-            "FBillTypeID": {"FNumber": "YSD01_SYS"},
-            "FCustId": {"FNumber": context.get("return_request", {}).get("customer_code", "")},
-            "FNote": f"中台自动创建-关联退货单 {context.get('return_order_bill_no', '')}",
-        }
-        result = connector.save_then_submit_audit("AR_RECEIVABLE", model)
+        if not return_order_bill_no:
+            return StepResult(status="failed", error="Missing return_order_bill_no in context")
+
+        bills = connector.query_bills(
+            form_id="AR_RECEIVABLE",
+            field_keys=["FID", "FBillNo", "FDocumentStatus", "FALLAMOUNTFOR"],
+            filter_string=f"FSOURCEBILLNO = '{return_order_bill_no}'",
+        )
+        if not bills:
+            return StepResult(
+                status="failed",
+                error=f"No auto-generated receivable found for return order {return_order_bill_no}",
+            )
+
+        bill = bills[0]
+        bill_id = str(bill["FID"])
+        bill_no = str(bill["FBillNo"])
+        doc_status = bill.get("FDocumentStatus", "")
+        logger.info(
+            "Found auto-generated receivable: bill_no=%s, bill_id=%s, status=%s",
+            bill_no,
+            bill_id,
+            doc_status,
+        )
+
+        if doc_status == "C":
+            logger.info("Receivable %s already audited, skipping", bill_no)
+        else:
+            if doc_status not in ("B", "C"):
+                try:
+                    connector.submit("AR_RECEIVABLE", bill_id, bill_no)
+                except Exception as e:
+                    logger.warning("Submit receivable failed: %s, attempting audit anyway", e)
+            connector.audit("AR_RECEIVABLE", bill_id, bill_no)
+
         return StepResult(
             status="completed",
             data={
-                "receivable_bill_no": result["bill_no"],
-                "receivable_bill_id": result["bill_id"],
+                "receivable_bill_no": bill_no,
+                "receivable_bill_id": bill_id,
+                "receivable_amount": bill.get("FALLAMOUNTFOR"),
             },
         )
     except Exception as e:
@@ -188,6 +240,31 @@ def create_erp_negative_receivable_handler(context: dict, db: Session) -> StepRe
                 logger.warning(
                     "create_erp_negative_receivable_handler: failed to disconnect connector"
                 )
+
+
+def _build_refund_bill_model(context: dict) -> dict:
+    from datetime import date
+
+    rr = context.get("return_request", {})
+    amount = rr.get("refund_amount") or rr.get("price", 0)
+    return {
+        "FBillTypeID": {"FNumber": "SKTKDLX01_SYS"},
+        "FDate": date.today().isoformat(),
+        "FPAYORGID": {"FNumber": rr.get("sale_org", "100")},
+        "FCONTACTUNIT": {"FNumber": rr.get("customer_code", "")},
+        "FSETTLECUR": {"FNumber": "PRE001"},
+        "FPURPOSEID": {"FNumber": "SFKYT01_SYS"},
+        "FREFUNDBILLENTRY": [
+            {
+                "FSETTLETYPEID": {"FNumber": rr.get("settle_type", "JSFS04_SYS")},
+                "FREFUNDAMOUNTFOR_E": amount,
+                "FREALREFUNDAMOUNTFOR": amount,
+                "FNOTE": f"中台退款-退货单{context.get('return_order_bill_no', '')}",
+                "FPURPOSEID": {"FNumber": "SFKYT01_SYS"},
+                "FACCOUNTID": {"FNumber": rr.get("bank_account", "755930370110902")},
+            }
+        ],
+    }
 
 
 def create_erp_refund_bill_handler(context: dict, db: Session) -> StepResult:
@@ -218,11 +295,7 @@ def create_erp_refund_bill_handler(context: dict, db: Session) -> StepResult:
                 data={"refund_bill_no": existing_bill_no, "refund_bill_id": existing_bill_id},
             )
 
-        model = {
-            "FBillTypeID": {"FNumber": "SKTKD01_SYS"},
-            "FCustId": {"FNumber": context.get("return_request", {}).get("customer_code", "")},
-            "FNote": f"中台自动创建-关联应收单 {context.get('receivable_bill_no', '')}",
-        }
+        model = _build_refund_bill_model(context)
         result = connector.save_then_submit_audit("AR_REFUNDBILL", model)
         return StepResult(
             status="completed",

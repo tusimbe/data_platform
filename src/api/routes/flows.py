@@ -6,6 +6,7 @@ from src.api.schemas.flow import (
     FlowDefinitionCreate,
     FlowDefinitionResponse,
     FlowDefinitionUpdate,
+    FlowInstanceCreate,
     FlowInstanceResponse,
 )
 from src.services import flow_service
@@ -81,6 +82,26 @@ def list_flow_instances(
         flow_definition_id=flow_definition_id,
     )
     result["items"] = [_instance_to_response(i) for i in result["items"]]
+    return result
+
+
+@router.post("/flows/instances", response_model=FlowInstanceResponse, status_code=201)
+def create_flow_instance(
+    data: FlowInstanceCreate,
+    session: Session = Depends(get_db),
+):
+    instance = flow_service.create_instance(session, data.flow_definition_id, data.context)
+    session.commit()
+    return instance
+
+
+@router.post("/flows/instances/{instance_id}/advance", status_code=202)
+def advance_flow_instance(
+    instance_id: int,
+    session: Session = Depends(get_db),
+):
+    result = flow_service.advance_flow(instance_id, session)
+    session.commit()
     return result
 
 

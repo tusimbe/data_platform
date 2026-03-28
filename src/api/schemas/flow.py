@@ -21,6 +21,11 @@ class FlowDefinitionUpdate(BaseModel):
     steps: list[FlowStepSchema] | None = Field(None, min_length=1)
 
 
+class FlowInstanceCreate(BaseModel):
+    flow_definition_id: int
+    context: dict = Field(default_factory=dict)
+
+
 class FlowDefinitionResponse(BaseModel):
     id: int
     name: str
