@@ -21,8 +21,10 @@ DEFAULT_PAGE_SIZE = 100
 MAX_PAGES = 1000
 
 # 纷享销客支持的实体及对应 API 路径
-# 使用 CRM v2 data/query 统一查询接口
+# 标准对象使用 /cgi/crm/v2/data/query
+# 自定义对象 (__c 后缀) 使用 /cgi/crm/custom/v2/data/query
 FXIAOKE_QUERY_PATH = "/cgi/crm/v2/data/query"
+FXIAOKE_CUSTOM_QUERY_PATH = "/cgi/crm/custom/v2/data/query"
 FXIAOKE_CREATE_PATH = "/cgi/crm/v2/data/create"
 
 FXIAOKE_ENTITIES = {
@@ -41,6 +43,17 @@ FXIAOKE_ENTITIES = {
     "contract": {
         "description": "合同",
         "api_name": "ContractObj",
+    },
+    "return_order": {
+        "description": "退货申请",
+        "api_name": "object_nko2c__c",
+        "custom": True,
+    },
+    "return_order_detail": {
+        "description": "退货申请明细",
+        "api_name": "object_A3f18__c",
+        "custom": True,
+        "master_field": "field_4lTZ2__c",  # FK to return_order._id
     },
 }
 
@@ -137,7 +150,10 @@ class FenxiangxiaokeConnector(BaseConnector):
 
         self._ensure_token()
         entity_config = FXIAOKE_ENTITIES[entity]
-        url = f"{self.config['base_url']}{FXIAOKE_QUERY_PATH}"
+        query_path = (
+            FXIAOKE_CUSTOM_QUERY_PATH if entity_config.get("custom") else FXIAOKE_QUERY_PATH
+        )
+        url = f"{self.config['base_url']}{query_path}"
 
         all_records = []
         offset = 0
@@ -241,6 +257,73 @@ class FenxiangxiaokeConnector(BaseConnector):
             failure_count=failure_count,
             failures=failures,
         )
+
+    def pull_return_with_details(
+        self,
+        since: datetime | None = None,
+        filters: dict | None = None,
+    ) -> list[dict]:
+        """拉取退货申请主表 + 关联明细行，返回合并后的记录列表。
+
+        Each record has its original master fields plus a 'details' key
+        containing the list of detail line records.
+        """
+        masters = self.pull("return_order", since=since, filters=filters)
+        if not masters:
+            return []
+
+        self._ensure_token()
+        detail_config = FXIAOKE_ENTITIES["return_order_detail"]
+        detail_url = f"{self.config['base_url']}{FXIAOKE_CUSTOM_QUERY_PATH}"
+        master_fk_field = detail_config["master_field"]
+
+        for master in masters:
+            master_id = master.get("_id", "")
+            if not master_id:
+                master["details"] = []
+                continue
+
+            try:
+                detail_payload = {
+                    "corpAccessToken": self._token,
+                    "corpId": self.config.get("corp_id", ""),
+                    "currentOpenUserId": self.config.get("open_user_id", ""),
+                    "data": {
+                        "dataObjectApiName": detail_config["api_name"],
+                        "search_query_info": {
+                            "limit": 100,
+                            "offset": 0,
+                            "filters": [
+                                {
+                                    "field_name": master_fk_field,
+                                    "field_values": [master_id],
+                                    "operator": "EQ",
+                                }
+                            ],
+                            "orders": [{"fieldApiName": "order_by", "isAsc": True}],
+                        },
+                    },
+                }
+                result = self._request("POST", detail_url, json=detail_payload)
+                if result.get("errorCode") == 0:
+                    master["details"] = result.get("data", {}).get("dataList", [])
+                else:
+                    logger.warning(
+                        "Failed to fetch return order details",
+                        extra={
+                            "master_id": master_id,
+                            "error": result.get("errorMessage", ""),
+                        },
+                    )
+                    master["details"] = []
+            except Exception as e:
+                logger.warning(
+                    "Exception fetching return order details",
+                    extra={"master_id": master_id, "error": str(e)},
+                )
+                master["details"] = []
+
+        return masters
 
     def get_schema(self, entity: str) -> dict:
         """获取实体配置信息"""

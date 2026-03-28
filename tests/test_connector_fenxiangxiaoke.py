@@ -41,7 +41,7 @@ def test_fenxiangxiaoke_registered():
 def test_fenxiangxiaoke_list_entities(connector):
     """应返回支持的实体列表"""
     entities = connector.list_entities()
-    assert len(entities) == 4
+    assert len(entities) == 6
     names = [e.name for e in entities]
     assert "customer" in names
     assert "contact" in names

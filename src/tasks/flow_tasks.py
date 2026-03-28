@@ -154,6 +154,8 @@ def poll_waiting_flows():
 
 @celery_app.task(name="flow.poll_crm_returns")
 def poll_crm_returns():
+    from src.handlers.flow_steps import _map_crm_return_to_context
+
     logger.info("poll_crm_returns started", extra={})
     SessionLocal = get_session_local()
     session = SessionLocal()
@@ -195,7 +197,16 @@ def poll_crm_returns():
             return {"status": "ok", "message": "connector not configured", "created": 0}
 
         try:
-            records = connector.pull(return_entity, since=since)
+            life_status_filter = {
+                "field_name": "life_status",
+                "field_values": ["normal"],
+                "operator": "EQ",
+            }
+            pull_filters = {"filters": [life_status_filter]}
+            if hasattr(connector, "pull_return_with_details"):
+                records = connector.pull_return_with_details(since=since, filters=pull_filters)
+            else:
+                records = connector.pull(return_entity, since=since, filters=pull_filters)
         except Exception as e:
             logger.exception(
                 "poll_crm_returns connector pull failed",
@@ -242,10 +253,11 @@ def poll_crm_returns():
                 skipped_existing += 1
                 continue
 
+            mapped_request = _map_crm_return_to_context(record)
             instance = create_instance(
                 session,
                 flow_def.id,
-                context={"return_request": record},
+                context={"return_request": mapped_request},
                 source_record_id=record_id,
             )
             created += 1

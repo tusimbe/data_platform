@@ -8,6 +8,169 @@ from src.services.flow_service import StepResult
 
 logger = logging.getLogger(__name__)
 
+# --- CRM field name → ERP / Feishu mapping tables ---
+
+_CRM_WAREHOUSE_TO_ERP = {
+    "option1": "KMCK007",  # 深圳潜行退货仓（昆明）
+    "Uzq85kDP1": "SZCK006",  # 赣州潜行退货仓（赣州）→ mapped to 深圳潜行退货仓(GZ)
+}
+
+_CRM_RETURN_TYPE_TO_ERP = {
+    "option1": "7DWLY",  # 7天无理由退货
+    "5c9krzyPJ": "THLX01_SYS",  # 质量问题退换货 → 退货
+}
+
+_CRM_PRODUCT_LINE_TO_FEISHU = {
+    "水下机器人": "option_1BRHZ0X0S2OE8",
+    "智慧渔业": "option_1BRHZ0X0S2OE8",
+    "清洁机器人": "option_11SSIMCHSF18G",
+}
+
+_CRM_COMPANY_TO_FEISHU = {
+    "深圳潜行创新科技有限公司": "ly5f0c8e-2zxry5kv6mo-0",
+}
+
+_CRM_WAREHOUSE_TO_FEISHU = {
+    "option1": "lugeg8ud-bhryml0yll-1",  # 昆明仓
+    "Uzq85kDP1": "option_0",  # 赣州仓
+}
+
+_CRM_RETURN_TYPE_TO_FEISHU = {
+    "option1": "option_1Y3XM46ER8RK0",  # 7天无理由退货
+    "5c9krzyPJ": "option_1W8HOSU7YBY80",  # 质量问题 → 退货选项
+}
+
+
+def _map_crm_return_to_context(crm_record: dict) -> dict:
+    """Translate a raw CRM return_order record into the flow context return_request dict."""
+    details = crm_record.get("details", [])
+    warehouse_code = crm_record.get("return_warehouse__c", "option1")
+
+    items = []
+    total_amount = 0.0
+    for detail in details:
+        material_number = detail.get("field_0j4GR__c", "")
+        qty = int(detail.get("field_HgHiC__c", "1") or "1")
+        unit_price = float(detail.get("field_6xGlQ__c", "0") or "0")
+        amount = float(detail.get("field_Q5wwd__c", "0") or "0")
+        total_amount += amount
+        items.append(
+            {
+                "material_number": material_number,
+                "product_name": detail.get("field_BS878__c__r", ""),
+                "qty": qty,
+                "price": unit_price,
+                "tax_price": unit_price,
+            }
+        )
+
+    if not items:
+        amt_str = crm_record.get("field_P1jbp__c", "0")
+        total_amount = float(amt_str) if amt_str else 0.0
+
+    return {
+        "crm_record_id": crm_record.get("_id", ""),
+        "crm_return_name": crm_record.get("name", ""),
+        "customer_name": crm_record.get("field_mlRW0__c__r", ""),
+        "customer_code": "DS0002",
+        "erp_order_no": crm_record.get("erp_sale_order_id__c", ""),
+        "product_line": crm_record.get("product_line__c", ""),
+        "company": crm_record.get("single_line_text__c", ""),
+        "return_type_code": crm_record.get("field_8r1i7__c", ""),
+        "return_type_name": crm_record.get("field_8r1i7__c__r", ""),
+        "warehouse": _CRM_WAREHOUSE_TO_ERP.get(warehouse_code, "SZCK006"),
+        "warehouse_code": warehouse_code,
+        "return_reason": _CRM_RETURN_TYPE_TO_ERP.get(crm_record.get("field_8r1i7__c", ""), "7DWLY"),
+        "price": total_amount,
+        "refund_amount": total_amount,
+        "items": items,
+    }
+
+
+def _map_crm_return_to_feishu_form(return_request: dict) -> list[dict]:
+    """Build 飞书审批 form_data widgets from a mapped return_request dict."""
+    items = return_request.get("items", [])
+    product_names = ", ".join(it.get("product_name", "") for it in items) or "N/A"
+    material_numbers = ", ".join(it.get("material_number", "") for it in items) or "N/A"
+    total_qty = sum(it.get("qty", 0) for it in items) or 1
+    total_amount = return_request.get("price", 0)
+
+    product_line = return_request.get("product_line", "")
+    product_line_option = _CRM_PRODUCT_LINE_TO_FEISHU.get(product_line, "option_1BRHZ0X0S2OE8")
+
+    company = return_request.get("company", "")
+    company_option = _CRM_COMPANY_TO_FEISHU.get(company, "ly5f0c8e-2zxry5kv6mo-0")
+
+    warehouse_code = return_request.get("warehouse_code", "option1")
+    warehouse_option = _CRM_WAREHOUSE_TO_FEISHU.get(warehouse_code, "lugeg8ud-bhryml0yll-1")
+
+    return_type_code = return_request.get("return_type_code", "option1")
+    return_option = _CRM_RETURN_TYPE_TO_FEISHU.get(return_type_code, "option_1W8HOSU7YBY80")
+
+    return_type_option = "option_1Y3XM46ER8RK0"
+    if return_type_code == "option1":
+        return_type_option = "option_1Y3XM46ER8RK0"
+
+    return [
+        {
+            "id": "widget17097041122290001",
+            "type": "input",
+            "value": f"退货申请-{return_request.get('crm_return_name', '')}",
+        },
+        {"id": "widget17199855863190001", "type": "radioV2", "value": company_option},
+        {
+            "id": "widget17044374922644145592676844312",
+            "type": "input",
+            "value": return_request.get("erp_order_no", ""),
+        },
+        {
+            "id": "widget17044374925130758661767103793",
+            "type": "radioV2",
+            "value": product_line_option,
+        },
+        {"id": "widget17044374923208668401250281164", "type": "radioV2", "value": return_option},
+        {"id": "widget17044374924784750207991989514", "type": "radioV2", "value": warehouse_option},
+        {"id": "widget1704437492417154337041962472", "type": "radioV2", "value": "option_1"},
+        {
+            "id": "widget17103188979720001",
+            "type": "radioV2",
+            "value": "ltpjpnp2-zsmkrpel5ms-0" if len(items) <= 1 else "ltpjpnp2-776lugahwm4-0",
+        },
+        {
+            "id": "widget17044374922647633089730529883",
+            "type": "radioV2",
+            "value": return_type_option,
+        },
+        {"id": "widget17103190108380001", "type": "input", "value": product_names[:200]},
+        {"id": "widget17119605722650001", "type": "input", "value": material_numbers[:200]},
+        {"id": "widget17103190357250001", "type": "input", "value": str(total_qty)},
+        {"id": "widget17103190520600001", "type": "amount", "value": str(total_amount)},
+        {"id": "widget17044374921415902955164242986", "type": "input", "value": "待填写"},
+        {
+            "id": "widget17044374924939488823226624671",
+            "type": "textarea",
+            "value": f"中台自动发起-{return_request.get('return_type_name', '')}",
+        },
+        {"id": "widget17044374922689175280575462519", "type": "radioV2", "value": "option_1"},
+        {"id": "widget1704437492636905943464584325", "type": "input", "value": "待制单"},
+        {"id": "widget1704437492541973339237646441", "type": "input", "value": "待审核"},
+        {
+            "id": "widget17044374927776950585882470463",
+            "type": "textarea",
+            "value": "中台自动发起-待评估",
+        },
+        {
+            "id": "widget17044374924681069888512789",
+            "type": "textarea",
+            "value": "中台自动发起-待确认",
+        },
+        {
+            "id": "widget17044374925851700580832692851",
+            "type": "textarea",
+            "value": "中台自动发起-待稽核",
+        },
+    ]
+
 
 def create_feishu_approval_handler(context: dict, db: Session) -> StepResult:
     logger.info("Executing create_feishu_approval_handler", extra={})
@@ -25,15 +188,17 @@ def create_feishu_approval_handler(context: dict, db: Session) -> StepResult:
             },
         )
 
-        # Use pre-built form_data from context if available (widget-level format),
-        # otherwise fall back to generic wrapper.
-        form_data = context.get("form_data") or [
-            {
-                "id": "widget17097041122290001",
-                "type": "input",
-                "value": json.dumps(return_request, ensure_ascii=False),
-            }
-        ]
+        form_data = context.get("form_data")
+        if not form_data and return_request:
+            form_data = _map_crm_return_to_feishu_form(return_request)
+        if not form_data:
+            form_data = [
+                {
+                    "id": "widget17097041122290001",
+                    "type": "input",
+                    "value": json.dumps(return_request, ensure_ascii=False),
+                }
+            ]
 
         instance_code = connector.create_approval_instance(approval_code, open_id, form_data)
         return StepResult(status="completed", data={"approval_instance_code": instance_code})
@@ -98,14 +263,27 @@ def poll_feishu_approval_handler(context: dict, db: Session) -> StepResult:
 def _build_return_order_model(rr: dict) -> dict:
     from datetime import date
 
-    return {
-        "FBillTypeID": {"FNumber": "XSTHD01_SYS"},
-        "FDate": rr.get("return_date") or date.today().isoformat(),
-        "FSaleOrgId": {"FNumber": rr.get("sale_org", "100")},
-        "FStockOrgId": {"FNumber": rr.get("stock_org", "100")},
-        "FRetcustId": {"FNumber": rr.get("customer_code", "")},
-        "FReturnReason": {"FNumber": rr.get("return_reason", "7DWLY")},
-        "FEntity": [
+    items = rr.get("items", [])
+    warehouse = rr.get("warehouse", "SZCK006")
+
+    if items:
+        entity_lines = []
+        for item in items:
+            entity_lines.append(
+                {
+                    "FMaterialId": {"FNumber": item.get("material_number", "")},
+                    "FUnitID": {"FNumber": item.get("unit", "Pcs")},
+                    "FRealQty": item.get("qty", 1),
+                    "FPrice": item.get("price", 0),
+                    "FTaxPrice": item.get("tax_price") or item.get("price", 0),
+                    "FEntryTaxRate": item.get("tax_rate", 13.0),
+                    "FStockId": {"FNumber": warehouse},
+                    "FStockstatusId": {"FNumber": item.get("stock_status", "KCZT01_SYS")},
+                    "FReturnType": {"FNumber": rr.get("return_type", "THLX01_SYS")},
+                }
+            )
+    else:
+        entity_lines = [
             {
                 "FMaterialId": {"FNumber": rr.get("material_number", "")},
                 "FUnitID": {"FNumber": rr.get("unit", "Pcs")},
@@ -113,11 +291,20 @@ def _build_return_order_model(rr: dict) -> dict:
                 "FPrice": rr.get("price", 0),
                 "FTaxPrice": rr.get("tax_price") or rr.get("price", 0),
                 "FEntryTaxRate": rr.get("tax_rate", 13.0),
-                "FStockId": {"FNumber": rr.get("warehouse", "SZCK006")},
+                "FStockId": {"FNumber": warehouse},
                 "FStockstatusId": {"FNumber": rr.get("stock_status", "KCZT01_SYS")},
                 "FReturnType": {"FNumber": rr.get("return_type", "THLX01_SYS")},
             }
-        ],
+        ]
+
+    return {
+        "FBillTypeID": {"FNumber": "XSTHD01_SYS"},
+        "FDate": rr.get("return_date") or date.today().isoformat(),
+        "FSaleOrgId": {"FNumber": rr.get("sale_org", "100")},
+        "FStockOrgId": {"FNumber": rr.get("stock_org", "100")},
+        "FRetcustId": {"FNumber": rr.get("customer_code", "")},
+        "FReturnReason": {"FNumber": rr.get("return_reason", "7DWLY")},
+        "FEntity": entity_lines,
     }
 
 
