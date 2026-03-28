@@ -267,7 +267,7 @@ def poll_crm_returns():
         logger.info(
             "poll_crm_returns completed",
             extra={
-                "created": created,
+                "created_count": created,
                 "skipped_existing": skipped_existing,
                 "skipped_no_id": skipped_no_id,
                 "polled": len(records),
